@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SupportPilot Widget Test</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+      .card {
+        max-width: 760px;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
+      }
+      h1 {
+        margin: 0 0 12px 0;
+        font-size: 22px;
+      }
+      p {
+        margin: 6px 0;
+        color: #334155;
+      }
+      .grid {
+        display: grid;
+        gap: 10px;
+        margin-top: 16px;
+      }
+      label {
+        font-size: 13px;
+        color: #334155;
+        display: grid;
+        gap: 6px;
+      }
+      input {
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 14px;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 12px;
+      }
+      button {
+        border: none;
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-size: 14px;
+        cursor: pointer;
+        background: #0f172a;
+        color: #fff;
+      }
+      .muted {
+        font-size: 12px;
+        color: #64748b;
+        margin-top: 14px;
+      }
+      code {
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 1px 6px;
+      }
+      .ok {
+        color: #166534;
+      }
+      .warn {
+        color: #b45309;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>SupportPilot Widget Local Test</h1>
+      <p>This page injects your embeddable widget script.</p>
+      <p>Click <strong>Load Widget</strong>, then use the floating chat button.</p>
+
+      <div class="grid">
+        <label>
+          Backend URL
+          <input id="backendUrl" value="http://localhost:3001" />
+        </label>
+
+        <label>
+          Client ID
+          <input id="clientId" placeholder="your-client-id-here" />
+        </label>
+      </div>
+
+      <div class="row">
+        <button id="loadBtn">Load Widget</button>
+        <button id="reloadBtn">Reset + Reload</button>
+      </div>
+
+      <p id="status" class="muted">Widget not loaded yet.</p>
+      <p class="muted">
+        Script injected as:
+        <code>&lt;script src="{BACKEND_URL}/widget.js" data-client-id="{CLIENT_ID}"&gt;&lt;/script&gt;</code>
+      </p>
+    </div>
+
+    <script>
+      (function () {
+        var loadBtn = document.getElementById("loadBtn");
+        var reloadBtn = document.getElementById("reloadBtn");
+        var backendUrlInput = document.getElementById("backendUrl");
+        var clientIdInput = document.getElementById("clientId");
+        var statusEl = document.getElementById("status");
+
+        function setStatus(text, cls) {
+          statusEl.className = "muted " + (cls || "");
+          statusEl.textContent = text;
+        }
+
+        function normalizeUrl(raw) {
+          return String(raw || "").trim().replace(/\/$/, "");
+        }
+
+        function clearWidgetArtifacts() {
+          var existing = document.querySelectorAll("script[data-supportpilot-test='1']");
+          existing.forEach(function (el) {
+            el.remove();
+          });
+
+          var uiNodes = document.querySelectorAll(".spw-launcher, .spw-panel");
+          uiNodes.forEach(function (el) {
+            el.remove();
+          });
+
+          var styles = document.querySelectorAll("style");
+          styles.forEach(function (el) {
+            if (String(el.textContent || "").indexOf(".spw-launcher") !== -1) {
+              el.remove();
+            }
+          });
+
+          window.__supportPilotWidgetLoaded = false;
+        }
+
+        function injectWidget() {
+          var backendUrl = normalizeUrl(backendUrlInput.value);
+          var clientId = String(clientIdInput.value || "").trim();
+
+          if (!backendUrl || !clientId) {
+            setStatus("Backend URL and Client ID are required.", "warn");
+            return;
+          }
+
+          clearWidgetArtifacts();
+
+          var script = document.createElement("script");
+          script.src = backendUrl + "/widget.js?v=" + Date.now();
+          script.async = true;
+          script.setAttribute("data-client-id", clientId);
+          script.setAttribute("data-supportpilot-test", "1");
+
+          script.onload = function () {
+            setStatus("Widget loaded. Click the floating Chat button.", "ok");
+          };
+          script.onerror = function () {
+            setStatus("Failed to load widget.js. Check backend URL/server.", "warn");
+          };
+
+          document.body.appendChild(script);
+          setStatus("Loading widget...", "");
+        }
+
+        loadBtn.addEventListener("click", injectWidget);
+        reloadBtn.addEventListener("click", function () {
+          try {
+            var clientId = String(clientIdInput.value || "").trim();
+            localStorage.removeItem("supportpilot_widget_v1_" + clientId);
+          } catch (_) {}
+          injectWidget();
+        });
+      })();
+    </script>
+  </body>
+</html>
