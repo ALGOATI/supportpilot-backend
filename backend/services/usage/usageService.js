@@ -1,12 +1,5 @@
 const USAGE_SELECT_FIELDS = "id,business_id,month,ai_replies_used";
 
-function normalizePlan(plan) {
-  const value = String(plan || "").trim().toLowerCase();
-  if (value === "pro") return "pro";
-  if (value === "enterprise" || value === "business") return "enterprise";
-  return "starter";
-}
-
 function getMonthKey(date = new Date()) {
   const d = new Date(date);
   const year = d.getUTCFullYear();
@@ -32,13 +25,6 @@ export function createUsageService({
   supabaseAdmin,
   globalDailyCallCap = Number(process.env.GLOBAL_DAILY_AI_CALL_CAP || 10000),
 }) {
-  function getMonthlyPlanLimit(plan) {
-    const normalizedPlan = normalizePlan(plan);
-    if (normalizedPlan === "pro") return 3000;
-    if (normalizedPlan === "enterprise") return null;
-    return 1000;
-  }
-
   async function getOrCreateMonthlyUsage({ businessId, monthKey = getMonthKey() }) {
     const query = await supabaseAdmin
       .from("usage")
@@ -107,11 +93,13 @@ export function createUsageService({
 
   async function getMonthlyUsageStatus({
     businessId,
-    plan,
+    maxMessages,
     monthKey = getMonthKey(),
   }) {
     const usage = await getOrCreateMonthlyUsage({ businessId, monthKey });
-    const limit = getMonthlyPlanLimit(plan);
+    const limit = (maxMessages !== null && maxMessages !== undefined && maxMessages > 0)
+      ? maxMessages
+      : null;
     const isOverLimit = limit !== null && usage.aiRepliesUsed >= limit;
     return {
       monthKey,
@@ -220,8 +208,6 @@ export function createUsageService({
   return {
     getMonthKey,
     getDateKey,
-    normalizePlan,
-    getMonthlyPlanLimit,
     getOrCreateMonthlyUsage,
     getMonthlyUsageStatus,
     incrementMonthlyUsage,

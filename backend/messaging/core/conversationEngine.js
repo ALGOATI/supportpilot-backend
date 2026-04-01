@@ -26,6 +26,7 @@ export function createConversationEngine(deps) {
     saveConversationPreferredLanguage,
     loadConversationPreferredLanguage,
     loadUserPlan,
+    loadBusinessMaxMessages,
     getPlanLimits,
     getModelForTask,
     getModelsForPlan,
@@ -46,6 +47,8 @@ export function createConversationEngine(deps) {
     isNewBookingRequest,
     ESCALATION_REPLY_MESSAGE,
     maybeForwardPausedInboundToOwner,
+    incrementMonthlyStat,
+    syncBookingToCalendar,
   } = deps;
 
   function getTodayIsoDateInTimezone(timeZone) {
@@ -62,11 +65,13 @@ export function createConversationEngine(deps) {
     }
   }
 
-  function normalizePlanValue(plan) {
-    const normalized = String(plan || "starter").trim().toLowerCase();
-    if (normalized === "pro") return "pro";
-    if (normalized === "enterprise" || normalized === "business") return "enterprise";
-    return "starter";
+  // Maps plan name to model-routing tier for quality-of-service params only.
+  // NOT used for billing limits — those come from businesses.max_messages.
+  function mapPlanToTier(plan) {
+    const p = String(plan || "").trim().toLowerCase();
+    if (p === "pro") return "pro";
+    if (p === "enterprise" || p === "business") return "enterprise";
+    return "starter"; // trial, starter, standard, basic, etc.
   }
 
   function getRoutedModel(plan, task) {
@@ -97,7 +102,7 @@ export function createConversationEngine(deps) {
   }
 
   function getHistoryRowLimit(plan) {
-    const normalizedPlan = normalizePlanValue(plan);
+    const normalizedPlan = mapPlanToTier(plan);
     if (normalizedPlan === "enterprise") {
       return parsePositiveInt(process.env.HISTORY_ROWS_ENTERPRISE, 14);
     }
@@ -108,7 +113,7 @@ export function createConversationEngine(deps) {
   }
 
   function getReplyTokenCap(plan) {
-    const normalizedPlan = normalizePlanValue(plan);
+    const normalizedPlan = mapPlanToTier(plan);
     if (normalizedPlan === "enterprise") {
       return parsePositiveInt(process.env.OPENROUTER_MAX_TOKENS_ENTERPRISE, 360);
     }
@@ -119,7 +124,7 @@ export function createConversationEngine(deps) {
   }
 
   function getRelevantHistoryRowLimit(plan) {
-    const normalizedPlan = normalizePlanValue(plan);
+    const normalizedPlan = mapPlanToTier(plan);
     if (normalizedPlan === "enterprise") {
       return parsePositiveInt(process.env.HISTORY_RELEVANT_ROWS_ENTERPRISE, 10);
     }
@@ -130,7 +135,7 @@ export function createConversationEngine(deps) {
   }
 
   function getHistoryCharBudget(plan) {
-    const normalizedPlan = normalizePlanValue(plan);
+    const normalizedPlan = mapPlanToTier(plan);
     if (normalizedPlan === "enterprise") {
       return parsePositiveInt(process.env.HISTORY_CONTEXT_CHARS_ENTERPRISE, 2600);
     }
@@ -141,7 +146,7 @@ export function createConversationEngine(deps) {
   }
 
   function getKnowledgePromptItemLimit(plan) {
-    const normalizedPlan = normalizePlanValue(plan);
+    const normalizedPlan = mapPlanToTier(plan);
     if (normalizedPlan === "enterprise") {
       return parsePositiveInt(process.env.KNOWLEDGE_PROMPT_ITEMS_ENTERPRISE, 7);
     }
@@ -152,7 +157,7 @@ export function createConversationEngine(deps) {
   }
 
   function getKnowledgePromptCharBudget(plan) {
-    const normalizedPlan = normalizePlanValue(plan);
+    const normalizedPlan = mapPlanToTier(plan);
     if (normalizedPlan === "enterprise") {
       return parsePositiveInt(process.env.KNOWLEDGE_PROMPT_CHARS_ENTERPRISE, 2200);
     }
@@ -413,6 +418,11 @@ export function createConversationEngine(deps) {
       userId,
       status: "cancelled",
     });
+    if (syncBookingToCalendar) {
+      syncBookingToCalendar({ userId, bookingId: currentDraft.id, status: "cancelled" }).catch((err) =>
+        console.error("Calendar sync (new booking cancel) failed:", err?.message)
+      );
+    }
     return null;
   }
   // eslint-disable-next-line sonarjs/cognitive-complexity
@@ -437,10 +447,16 @@ export function createConversationEngine(deps) {
     }
 
     const fallbackBusiness = settings?.business || "No business info provided.";
-    const plan = normalizePlanValue(settings?.plan || "starter");
+    const plan = mapPlanToTier(settings?.plan || "starter");
     const tone = settings?.tone || "professional";
     const replyLength = settings?.reply_length || "concise";
-    const model = getRoutedModel(plan, "main_reply");
+    const { data: businessRow } = await supabaseAdmin
+      .from("businesses")
+      .select("ai_model")
+      .eq("id", userId)
+      .maybeSingle();
+    const rawAiModel = businessRow?.ai_model || "gpt-4o-mini";
+    const model = rawAiModel.includes("/") ? rawAiModel : `openai/${rawAiModel}`;
     const extractionModel = getRoutedModel(plan, "extraction") || model;
     const safetyModel = getRoutedModel(plan, "safety_check") || model;
     const planModels =
@@ -839,6 +855,9 @@ ${business}
 
     const userPlan = await loadUserPlan(userId);
     const planLimits = getPlanLimits(userPlan);
+    const businessMaxMessages = typeof loadBusinessMaxMessages === "function"
+      ? await loadBusinessMaxMessages(userId)
+      : null;
     const maxMessageChars = Number(planLimits?.maxMessageChars) || 300;
     if (countMessageChars(normalizedText) > maxMessageChars) {
       const lengthLimitReply = "Please shorten your message.";
@@ -1051,6 +1070,18 @@ ${business}
         }
       }
 
+      if (typeof incrementMonthlyStat === "function") {
+        try {
+          await incrementMonthlyStat({ businessId: userId, statName: "ai_messages_sent" });
+          if (!existingConversation) {
+            await incrementMonthlyStat({ businessId: userId, statName: "ai_conversations_handled" });
+          }
+          if (isEscalationTransition) {
+            await incrementMonthlyStat({ businessId: userId, statName: "human_escalations" });
+          }
+        } catch (_e) { /* non-critical */ }
+      }
+
       return {
         ok: true,
         userId,
@@ -1083,9 +1114,9 @@ ${business}
     } else {
       usedConversationsThisMonth = Number(usedConversationsThisMonth);
     }
-    const hasMonthlyLimit = Number.isFinite(planLimits.maxConversationsPerMonth);
+    const hasMonthlyLimit = businessMaxMessages !== null && businessMaxMessages > 0;
     const isOverLimit =
-      hasMonthlyLimit && usedConversationsThisMonth >= Number(planLimits.maxConversationsPerMonth);
+      hasMonthlyLimit && usedConversationsThisMonth >= businessMaxMessages;
 
     if (isOverLimit) {
       const softLimitReply =
@@ -1204,6 +1235,12 @@ ${business}
             userId,
             status: "cancelled",
           });
+          // Non-blocking calendar sync — remove from Google Calendar
+          if (syncBookingToCalendar) {
+            syncBookingToCalendar({ userId, bookingId: activeDraft.id, status: "cancelled" }).catch((err) =>
+              console.error("Calendar sync (cancel) failed:", err?.message)
+            );
+          }
         } else if (
           normalizedExtractedData.intent === "booking" ||
           (correctionMessage && activeDraft?.id && hasAnyBookingDraftField(normalizedExtractedData))
@@ -1232,6 +1269,12 @@ ${business}
               userId,
               status: "confirmed",
             });
+            // Non-blocking calendar sync (Google Calendar + ICS feed)
+            if (syncBookingToCalendar) {
+              syncBookingToCalendar({ userId, bookingId: draft.id, status: "confirmed" }).catch((err) =>
+                console.error("Calendar sync (confirm) failed:", err?.message)
+              );
+            }
           }
         }
       }
@@ -1307,6 +1350,18 @@ ${business}
       } catch (notifyErr) {
         console.error("Escalation notification failed:", notifyErr?.message || notifyErr);
       }
+    }
+
+    if (typeof incrementMonthlyStat === "function") {
+      try {
+        await incrementMonthlyStat({ businessId: userId, statName: "ai_messages_sent" });
+        if (!existingConversation) {
+          await incrementMonthlyStat({ businessId: userId, statName: "ai_conversations_handled" });
+        }
+        if (isEscalationTransition) {
+          await incrementMonthlyStat({ businessId: userId, statName: "human_escalations" });
+        }
+      } catch (_e) { /* non-critical */ }
     }
 
     return {

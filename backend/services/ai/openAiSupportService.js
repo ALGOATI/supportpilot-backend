@@ -46,13 +46,13 @@ function getTokensUsed(usage) {
 export function createOpenAiSupportService({ apiKey = process.env.OPENAI_API_KEY } = {}) {
   const client = apiKey ? new OpenAI({ apiKey }) : null;
 
-  async function generateReply({ businessName, message, knowledgeBase }) {
+  async function generateReply({ businessName, message, knowledgeBase, model = "gpt-4o-mini" }) {
     if (!client) {
       throw new Error("OPENAI_API_KEY is not configured.");
     }
 
     const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model,
       temperature: 0.3,
       max_tokens: 300,
       messages: [
@@ -83,7 +83,7 @@ export function createOpenAiSupportService({ apiKey = process.env.OPENAI_API_KEY
         completionTokens: Number(completion?.usage?.completion_tokens || 0),
         totalTokens: tokensUsed,
       },
-      model: "gpt-4o-mini",
+      model,
     };
   }
 

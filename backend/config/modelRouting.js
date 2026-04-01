@@ -15,16 +15,17 @@ function firstNonEmpty(...values) {
   return null;
 }
 
-export function normalizePlan(plan) {
+// Maps any plan name stored in the DB to the model-routing tier (starter/pro/enterprise).
+// Used ONLY for model selection and quality-of-service params — NOT for billing limits.
+function mapPlanToTier(plan) {
   const raw = String(plan || "").trim().toLowerCase();
   if (raw === "pro") return "pro";
   if (raw === "enterprise" || raw === "business") return "enterprise";
-  if (raw === "starter" || raw === "standard" || raw === "basic") return "starter";
-  return "starter";
+  return "starter"; // trial, starter, standard, basic, etc.
 }
 
 function getMainReplyModel(plan) {
-  const normalizedPlan = normalizePlan(plan);
+  const normalizedPlan = mapPlanToTier(plan);
   if (normalizedPlan === "enterprise") {
     return firstNonEmpty(
       process.env.OPENROUTER_MODEL_ENTERPRISE,
@@ -50,7 +51,7 @@ function getMainReplyModel(plan) {
 }
 
 export function getModelsForPlan(plan) {
-  const normalizedPlan = normalizePlan(plan);
+  const normalizedPlan = mapPlanToTier(plan);
   const mainReply = getMainReplyModel(normalizedPlan);
 
   if (normalizedPlan === "enterprise") {
@@ -122,14 +123,12 @@ export function hasAnyModelConfigured() {
 }
 
 export function getPlanLimits(plan) {
-  const normalizedPlan = normalizePlan(plan);
-  const models = getModelsForPlan(normalizedPlan);
+  const tier = mapPlanToTier(plan);
+  const models = getModelsForPlan(tier);
 
-  if (normalizedPlan === "enterprise") {
+  if (tier === "enterprise") {
     return {
-      plan: normalizedPlan,
-      maxConversationsPerMonth: null,
-      allowedChannels: null,
+      plan: tier,
       maxMessageChars: Math.max(
         500,
         Number(process.env.MESSAGE_CHAR_LIMIT_ENTERPRISE || 1200)
@@ -139,11 +138,9 @@ export function getPlanLimits(plan) {
     };
   }
 
-  if (normalizedPlan === "pro") {
+  if (tier === "pro") {
     return {
-      plan: normalizedPlan,
-      maxConversationsPerMonth: 3000,
-      allowedChannels: 2,
+      plan: tier,
       maxMessageChars: 500,
       aiModel: models.main_reply,
       models,
@@ -152,8 +149,6 @@ export function getPlanLimits(plan) {
 
   return {
     plan: "starter",
-    maxConversationsPerMonth: 1000,
-    allowedChannels: 1,
     maxMessageChars: 300,
     aiModel: models.main_reply,
     models,
@@ -161,7 +156,7 @@ export function getPlanLimits(plan) {
 }
 
 export function getReplyTokenCapForPlan(plan) {
-  const normalizedPlan = normalizePlan(plan);
+  const normalizedPlan = mapPlanToTier(plan);
   if (normalizedPlan === "enterprise") {
     return parsePositiveInt(process.env.OPENROUTER_MAX_TOKENS_ENTERPRISE, 360);
   }

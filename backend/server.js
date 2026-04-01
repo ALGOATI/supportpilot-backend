@@ -4,11 +4,14 @@ import { fileURLToPath } from "node:url";
 import { normalizeBookingExtractionDate } from "./utils/dateNormalization.js";
 import { createMessagingSystem } from "./messaging/index.js";
 import { createUsageService } from "./services/usage/usageService.js";
+import { createMonthlyStatsService } from "./services/usage/monthlyStatsService.js";
 import { createKnowledgeService } from "./services/knowledge/knowledgeService.js";
 import { createOpenAiSupportService } from "./services/ai/openAiSupportService.js";
 import { createWixWebhookService } from "./services/wix/wixWebhookService.js";
+import { createWixPaymentService } from "./services/wix/wixPaymentService.js";
+import { createCalendarService } from "./services/calendar/calendarService.js";
+import { getPlanDefaults } from "./config/planConfig.js";
 import {
-  normalizePlan,
   getPlanLimits,
   getModelsForPlan,
   getModelForTask,
@@ -62,6 +65,10 @@ const dotenvResult = dotenv.config({ path: envPath });
 
   /* ================================
     CORS
+    Set ALLOWED_ORIGINS in Render to allow dashboard access:
+    Example: ALLOWED_ORIGINS=https://your-dashboard.vercel.app,https://your-custom-domain.com
+    In production, requests from unlisted origins will be blocked.
+    Webhook endpoints (WhatsApp, Wix) don't send an Origin header, so they're unaffected.
   ================================ */
   const allowedOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
@@ -70,12 +77,24 @@ const dotenvResult = dotenv.config({ path: envPath });
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Allow requests with no origin (server-to-server, curl, etc.)
+        // Allow requests with no origin (server-to-server, curl, webhooks)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+
+        if (allowedOrigins.length === 0) {
+          // No origins configured — reject in production, allow in development
+          if (process.env.NODE_ENV === "production") {
+            console.warn(`⚠️ CORS: Blocked request from ${origin} — ALLOWED_ORIGINS not configured`);
+            return callback(new Error("CORS not configured"), false);
+          }
           return callback(null, true);
         }
-        return callback(new Error("Not allowed by CORS"));
+
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+
+        console.warn(`⚠️ CORS: Blocked request from ${origin}`);
+        return callback(new Error("Not allowed by CORS"), false);
       },
       credentials: true,
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -103,6 +122,7 @@ const dotenvResult = dotenv.config({ path: envPath });
   });
 
   app.use(express.json({
+    limit: '1mb',
     verify: (req, _res, buf) => { req.rawBody = buf; },
   }));
 
@@ -122,6 +142,7 @@ const dotenvResult = dotenv.config({ path: envPath });
     process.env.SUPABASE_SERVICE_ROLE_KEY
   );
   const usageService = createUsageService({ supabaseAdmin });
+  const monthlyStatsService = createMonthlyStatsService({ supabaseAdmin });
   const knowledgeService = createKnowledgeService({ supabaseAdmin });
   const openAiSupportService = createOpenAiSupportService({
     apiKey: process.env.OPENAI_API_KEY,
@@ -131,6 +152,11 @@ const dotenvResult = dotenv.config({ path: envPath });
     usageService,
     webhookSecret: process.env.WIX_WEBHOOK_SECRET,
   });
+  const wixPaymentService = createWixPaymentService({
+    supabaseAdmin,
+    dashboardUrl: process.env.DASHBOARD_URL,
+  });
+  const calendarService = createCalendarService({ supabaseAdmin });
 
   function pickModel(plan) {
     return getModelForTask(plan, "main_reply");
@@ -410,9 +436,9 @@ const dotenvResult = dotenv.config({ path: envPath });
 
   async function loadUserPlan(userId) {
     const { data, error } = await supabaseAdmin
-      .from("client_settings")
+      .from("businesses")
       .select("plan")
-      .eq("user_id", userId)
+      .eq("id", userId)
       .maybeSingle();
 
     if (error) {
@@ -423,7 +449,25 @@ const dotenvResult = dotenv.config({ path: envPath });
       throw new Error(error.message);
     }
 
-    return normalizePlan(data?.plan || "starter");
+    return data?.plan || "starter";
+  }
+
+  async function loadBusinessMaxMessages(userId) {
+    const { data, error } = await supabaseAdmin
+      .from("businesses")
+      .select("max_messages")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (error) {
+      const errText = String(error.message || "").toLowerCase();
+      if (errText.includes(SCHEMA_CACHE_TEXT) || errText.includes(DOES_NOT_EXIST_TEXT)) {
+        return null;
+      }
+      throw new Error(error.message);
+    }
+
+    return data?.max_messages ?? null;
   }
 
   /* ================================
@@ -1252,16 +1296,13 @@ const dotenvResult = dotenv.config({ path: envPath });
   }
 
   async function findUserByEmail(email) {
-    const { data: listData, error: listErr } =
-      await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 500 });
+    const { data: authUser, error } = await supabaseAdmin
+      .rpc("get_auth_user_by_email", { lookup_email: email })
+      .maybeSingle();
 
-    if (listErr) throw new Error(listErr.message);
+    if (error) throw new Error(error.message);
 
-    return (
-      listData?.users?.find(
-        (u) => (u.email || "").toLowerCase() === email.toLowerCase()
-      ) || null
-    );
+    return authUser || null;
   }
 
   function buildEscalationNotificationPreview({
@@ -2964,10 +3005,16 @@ const dotenvResult = dotenv.config({ path: envPath });
     }
 
     const fallbackBusiness = settings?.business || "No business info provided.";
-    const plan = normalizePlan(settings?.plan || "starter");
+    const plan = settings?.plan || "starter";
     const tone = settings?.tone || "professional";
     const replyLength = settings?.reply_length || "concise";
-    const model = pickModel(plan);
+    const { data: businessRow } = await supabaseAdmin
+      .from("businesses")
+      .select("ai_model")
+      .eq("id", userId)
+      .maybeSingle();
+    const rawAiModel = businessRow?.ai_model || "gpt-4o-mini";
+    const model = rawAiModel.includes("/") ? rawAiModel : `openai/${rawAiModel}`;
     const extractionModel = getModelForTask(plan, "extraction") || model;
     const businessTimezone = await loadBusinessTimezone(userId);
     const todayIsoDate = getTodayIsoDateInTimezone(businessTimezone);
@@ -3327,15 +3374,16 @@ ${business}
 
     const userPlan = await loadUserPlan(userId);
     const planLimits = getPlanLimits(userPlan);
+    const maxMessages = await loadBusinessMaxMessages(userId);
     const monthStartIso = getMonthStartIso(new Date());
     const usedConversationsThisMonth = await countMonthlyAiConversations(
       userId,
       monthStartIso
     );
-    const hasMonthlyLimit = Number.isFinite(planLimits.maxConversationsPerMonth);
+    const hasMonthlyLimit = maxMessages !== null && maxMessages > 0;
     const isOverLimit =
       hasMonthlyLimit &&
-      usedConversationsThisMonth >= Number(planLimits.maxConversationsPerMonth);
+      usedConversationsThisMonth >= maxMessages;
 
     if (isOverLimit) {
       const shouldSendSoftLimitMessage =
@@ -3684,6 +3732,13 @@ ${business}
   }
 
   async function processReplyJob(job) {
+    // Check before calling AI — catches edge cases where limit hit between queue and processing
+    const activeCheck = await wixPaymentService.isBusinessActive(job.user_id);
+    if (!activeCheck.active) {
+      console.log(`⛔ [Job] Skipping job ${job.id} — business ${job.user_id} inactive (${activeCheck.reason})`);
+      return { skipped: true, reason: activeCheck.reason };
+    }
+
     const result = await messaging.conversationEngine.handleIncomingMessage({
       userId: job.user_id,
       channel: job.channel || "dashboard",
@@ -3785,11 +3840,9 @@ ${business}
   // eslint-disable-next-line sonarjs/cognitive-complexity
   async function buildAnalyticsOverview(userId) {
     const now = new Date();
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOf7d = new Date(now);
-    startOf7d.setDate(startOf7d.getDate() - 6);
-    startOf7d.setHours(0, 0, 0, 0);
+    const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const startOf7d = new Date(startOfToday);
+    startOf7d.setUTCDate(startOf7d.getUTCDate() - 6);
 
     const { data: messageRows, error: messageErr } = await supabaseAdmin
       .from("messages")
@@ -4587,6 +4640,7 @@ ${business}
       reserveWhatsAppInboundMessage,
       loadBusinessTimezone,
       loadUserPlan,
+      loadBusinessMaxMessages,
       getPlanLimits,
       getModelForTask,
       getModelsForPlan,
@@ -4623,6 +4677,7 @@ ${business}
       saveConversationPreferredLanguage,
       loadConversationPreferredLanguage,
       loadUserPlan,
+      loadBusinessMaxMessages,
       getPlanLimits,
       getModelForTask,
       getModelsForPlan,
@@ -4642,12 +4697,17 @@ ${business}
       finalizeBookingDraft,
       isNewBookingRequest,
       ESCALATION_REPLY_MESSAGE,
+      incrementMonthlyStat: monthlyStatsService.incrementMonthlyStat,
+      syncBookingToCalendar: calendarService.syncBookingToCalendar,
     },
     channelDeps: {
       supabaseAdmin,
       resolveWhatsAppClientId,
       getClientWhatsAppConfig,
       findClientByPhoneNumberId,
+      isBusinessActive: wixPaymentService.isBusinessActive,
+      incrementMonthlyUsage: usageService.incrementMonthlyUsage,
+      incrementMonthlyStat: monthlyStatsService.incrementMonthlyStat,
     },
   });
 
@@ -5018,8 +5078,8 @@ ${business}
       let plan = "starter";
       let planSelected = false;
       if (!settingsQ.error) {
-        plan = normalizePlan(settingsQ.data?.plan || "starter");
-        planSelected = ["starter", "pro", "enterprise"].includes(plan);
+        plan = settingsQ.data?.plan || "starter";
+        planSelected = ["trial", "starter", "pro", "business"].includes(plan);
       } else if (
         !isSchemaCompatibilityError(settingsQ.error, ["client_settings", "plan"])
       ) {
@@ -5290,6 +5350,110 @@ ${business}
       return res.json({ ok: true, completed: true, skipped: true });
     } catch (e) {
       console.error(e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  // --- Calendar integration endpoints ---
+
+  // ICS feed (public, token-authenticated — no Supabase user required)
+  app.get("/api/calendar/feed/:businessId/:token", async (req, res) => {
+    try {
+      const { businessId, token } = req.params;
+      if (!businessId || !token) return res.status(400).send("Missing parameters");
+
+      const icsContent = await calendarService.generateIcsFeed(businessId, token);
+      if (!icsContent) return res.status(404).send("Not found");
+
+      res.set("Content-Type", "text/calendar; charset=utf-8");
+      res.set("Content-Disposition", 'attachment; filename="bookings.ics"');
+      return res.send(icsContent);
+    } catch (e) {
+      console.error("ICS feed error:", e);
+      return res.status(500).send(SERVER_ERROR_MESSAGE);
+    }
+  });
+
+  // Get calendar feed URL for the current business
+  app.get("/api/calendar/feed-url", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const feedToken = await calendarService.getOrCreateFeedToken(userId);
+      const baseUrl = process.env.BASE_URL || `http://localhost:${PORT}`;
+      const feedUrl = `${baseUrl}/api/calendar/feed/${userId}/${feedToken}`;
+      return res.json({ feed_url: feedUrl });
+    } catch (e) {
+      console.error("Calendar feed URL error:", e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  // Google Calendar OAuth — start connection (Pro/Business only)
+  app.get("/api/calendar/google/connect", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const plan = await loadUserPlan(userId);
+      const planConfig = getPlanDefaults(plan);
+
+      if (!planConfig.google_calendar) {
+        return res.status(403).json({ error: "Google Calendar sync requires Pro or Business plan" });
+      }
+      if (!calendarService.hasGoogleConfig()) {
+        return res.status(501).json({ error: "Google Calendar integration not configured" });
+      }
+
+      const oauth2Client = await calendarService.createOAuth2Client();
+      const authUrl = calendarService.getGoogleAuthUrl(oauth2Client, userId);
+      return res.json({ auth_url: authUrl });
+    } catch (e) {
+      console.error("Google Calendar connect error:", e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  // Google Calendar OAuth — callback
+  app.get("/api/calendar/google/callback", async (req, res) => {
+    try {
+      const { code, state: businessId } = req.query;
+      if (!code || !businessId) return res.status(400).send("Missing code or state");
+
+      await calendarService.handleGoogleCallback(code, businessId);
+
+      const dashboardUrl = process.env.DASHBOARD_URL || "/";
+      return res.redirect(`${dashboardUrl}?calendar=connected`);
+    } catch (e) {
+      console.error("Google Calendar callback error:", e);
+      const dashboardUrl = process.env.DASHBOARD_URL || "/";
+      return res.redirect(`${dashboardUrl}?calendar=error`);
+    }
+  });
+
+  // Google Calendar — disconnect
+  app.post("/api/calendar/google/disconnect", requireSupabaseUser, async (req, res) => {
+    try {
+      await calendarService.disconnectGoogleCalendar(req.user.id);
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error("Google Calendar disconnect error:", e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  // Google Calendar — connection status
+  app.get("/api/calendar/google/status", requireSupabaseUser, async (req, res) => {
+    try {
+      const { data } = await supabaseAdmin
+        .from("businesses")
+        .select("google_calendar_tokens, google_calendar_id")
+        .eq("id", req.user.id)
+        .single();
+
+      return res.json({
+        connected: Boolean(data?.google_calendar_tokens),
+        calendar_id: data?.google_calendar_id || "primary",
+      });
+    } catch (e) {
+      console.error("Google Calendar status error:", e);
       return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
     }
   });
@@ -6307,22 +6471,296 @@ Rules:
     }
   });
 
+  app.get("/api/analytics/monthly-stats", requireSupabaseUser, async (req, res) => {
+    try {
+      const stats = await monthlyStatsService.getMonthlyStatsWithComparison({
+        businessId: req.user.id,
+      });
+      return res.json(stats);
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  app.get("/api/analytics/daily-volume", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const now = new Date();
+      const start30d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 29));
+
+      const { data: rows, error } = await supabaseAdmin
+        .from("messages")
+        .select("created_at,ai_reply")
+        .eq("user_id", userId)
+        .gte("created_at", start30d.toISOString())
+        .order("created_at", { ascending: true })
+        .limit(10000);
+
+      if (error) throw new Error(error.message);
+
+      const dayMap = new Map();
+      for (let d = 0; d < 30; d++) {
+        const dt = new Date(start30d);
+        dt.setUTCDate(dt.getUTCDate() + d);
+        const key = dt.toISOString().slice(0, 10);
+        dayMap.set(key, { date: key, total: 0, ai: 0, human: 0 });
+      }
+
+      for (const row of rows || []) {
+        const key = new Date(row.created_at).toISOString().slice(0, 10);
+        const entry = dayMap.get(key);
+        if (!entry) continue;
+        entry.total++;
+        if (row.ai_reply) entry.ai++;
+        else entry.human++;
+      }
+
+      return res.json({ days: Array.from(dayMap.values()) });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  app.get("/api/analytics/top-questions", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+      const { data: rows, error } = await supabaseAdmin
+        .from("messages")
+        .select("customer_message")
+        .eq("user_id", userId)
+        .gte("created_at", monthStart.toISOString())
+        .not("customer_message", "is", null)
+        .neq("customer_message", "")
+        .order("created_at", { ascending: false })
+        .limit(5000);
+
+      if (error) throw new Error(error.message);
+
+      // Group by normalized first message (simple keyword grouping)
+      const freq = new Map();
+      for (const row of rows || []) {
+        const msg = String(row.customer_message || "").trim().toLowerCase().slice(0, 120);
+        if (!msg) continue;
+        freq.set(msg, (freq.get(msg) || 0) + 1);
+      }
+
+      const sorted = Array.from(freq.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .map(([question, count]) => ({ question, count }));
+
+      return res.json({ questions: sorted });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  app.get("/api/analytics/escalation-reasons", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+
+      const { data: rows, error } = await supabaseAdmin
+        .from("conversations")
+        .select("escalation_reason")
+        .eq("user_id", userId)
+        .eq("status", "escalated")
+        .gte("created_at", monthStart.toISOString())
+        .limit(5000);
+
+      if (error) {
+        const text = String(error.message || "").toLowerCase();
+        if (text.includes("escalation_reason") || text.includes(SCHEMA_CACHE_TEXT)) {
+          return res.json({ reasons: [], total: 0 });
+        }
+        throw new Error(error.message);
+      }
+
+      const freq = new Map();
+      for (const row of rows || []) {
+        const reason = String(row.escalation_reason || "Other").trim();
+        freq.set(reason, (freq.get(reason) || 0) + 1);
+      }
+
+      const sorted = Array.from(freq.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => ({ reason, count }));
+
+      return res.json({ reasons: sorted, total: (rows || []).length });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  app.get("/api/analytics/monthly-report", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const monthParam = String(req.query.month || "").trim();
+      const monthKey = /^\d{4}-\d{2}$/.test(monthParam) ? monthParam : monthlyStatsService.getMonthKey();
+
+      const report = await monthlyStatsService.getMonthlyReport({
+        businessId: userId,
+        monthKey,
+      });
+
+      // Fetch top questions for this month
+      const [year, month] = monthKey.split("-").map(Number);
+      const monthStart = new Date(Date.UTC(year, month - 1, 1));
+      const monthEnd = new Date(Date.UTC(year, month, 1));
+
+      const [questionsResult, escalationsResult] = await Promise.all([
+        supabaseAdmin
+          .from("messages")
+          .select("customer_message")
+          .eq("user_id", userId)
+          .gte("created_at", monthStart.toISOString())
+          .lt("created_at", monthEnd.toISOString())
+          .not("customer_message", "is", null)
+          .neq("customer_message", "")
+          .limit(5000),
+        supabaseAdmin
+          .from("conversations")
+          .select("escalation_reason")
+          .eq("user_id", userId)
+          .eq("status", "escalated")
+          .gte("created_at", monthStart.toISOString())
+          .lt("created_at", monthEnd.toISOString())
+          .limit(5000),
+      ]);
+
+      // Top questions
+      const qFreq = new Map();
+      for (const row of questionsResult.data || []) {
+        const msg = String(row.customer_message || "").trim().toLowerCase().slice(0, 120);
+        if (!msg) continue;
+        qFreq.set(msg, (qFreq.get(msg) || 0) + 1);
+      }
+      const topQuestions = Array.from(qFreq.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([question, count]) => ({ question, count }));
+
+      // Escalation reasons
+      const eFreq = new Map();
+      for (const row of escalationsResult.data || []) {
+        const reason = String(row.escalation_reason || "Other").trim();
+        eFreq.set(reason, (eFreq.get(reason) || 0) + 1);
+      }
+      const escalationReasons = Array.from(eFreq.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => ({ reason, count }));
+
+      // Generate recommendations
+      const recommendations = [];
+      if (topQuestions.length > 0 && topQuestions[0].count >= 5) {
+        recommendations.push({
+          type: "faq",
+          message: `"${topQuestions[0].question}" was asked ${topQuestions[0].count} times — consider adding it to your FAQ`,
+        });
+      }
+      const escalationRate = report.ai_conversations_handled > 0
+        ? Math.round((report.human_escalations / report.ai_conversations_handled) * 100)
+        : 0;
+      if (escalationRate > 20) {
+        recommendations.push({
+          type: "escalation_rate",
+          message: `Your escalation rate is ${escalationRate}% — review escalated conversations and add common answers to your knowledge base`,
+        });
+      }
+      const unknownEscalations = eFreq.get("Other") || 0;
+      if (unknownEscalations > 10) {
+        recommendations.push({
+          type: "unknown_questions",
+          message: `${unknownEscalations} escalations were for unclassified reasons — review and add answers to your knowledge base`,
+        });
+      }
+
+      // Find busiest day of week
+      const dayVolumes = await supabaseAdmin
+        .from("messages")
+        .select("created_at")
+        .eq("user_id", userId)
+        .gte("created_at", monthStart.toISOString())
+        .lt("created_at", monthEnd.toISOString())
+        .limit(10000);
+
+      const dayCounts = [0, 0, 0, 0, 0, 0, 0]; // Sun-Sat
+      for (const row of dayVolumes.data || []) {
+        const day = new Date(row.created_at).getUTCDay();
+        dayCounts[day]++;
+      }
+      const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const busiestDayIdx = dayCounts.indexOf(Math.max(...dayCounts));
+      if (dayCounts[busiestDayIdx] > 0) {
+        recommendations.push({
+          type: "busiest_day",
+          message: `Your busiest day is ${dayNames[busiestDayIdx]} — consider adjusting staffing or AI availability`,
+        });
+      }
+
+      return res.json({
+        ...report,
+        top_questions: topQuestions,
+        escalation_reasons: escalationReasons,
+        escalation_rate: escalationRate,
+        recommendations,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  app.get("/api/analytics/usage-summary", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const now = new Date();
+      const userPlan = await loadUserPlan(userId);
+      const maxMessages = await loadBusinessMaxMessages(userId);
+      const monthStartIso = getMonthStartIso(now);
+      const conversationsUsed = await countMonthlyAiConversations(userId, monthStartIso);
+      const limit = (maxMessages !== null && maxMessages > 0) ? maxMessages : null;
+      const percentUsed = limit ? Math.round((conversationsUsed / limit) * 100) : null;
+
+      // Days until reset (first day of next month)
+      const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      const daysUntilReset = Math.ceil((nextMonth.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+      return res.json({
+        plan: userPlan,
+        conversations_used: conversationsUsed,
+        limit,
+        percent_used: percentUsed,
+        days_until_reset: daysUntilReset,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
   app.get("/api/usage", requireSupabaseUser, async (req, res) => {
     try {
       const userId = req.user.id;
       const now = new Date();
-      const normalizedPlan = await loadUserPlan(userId);
-      const planLimits = getPlanLimits(normalizedPlan);
+      const userPlan = await loadUserPlan(userId);
+      const maxMessages = await loadBusinessMaxMessages(userId);
       const monthStartIso = getMonthStartIso(now);
       const conversationsUsed = await countMonthlyAiConversations(userId, monthStartIso);
-      const limit = Number.isFinite(planLimits.maxConversationsPerMonth)
-        ? Number(planLimits.maxConversationsPerMonth)
-        : null;
+      const limit = (maxMessages !== null && maxMessages > 0) ? maxMessages : null;
       const percentUsed = limit ? Math.round((conversationsUsed / limit) * 100) : null;
-      const mainReplyModel = getModelForTask(normalizedPlan, "main_reply");
+      const mainReplyModel = getModelForTask(userPlan, "main_reply");
 
       return res.json({
-        plan: normalizedPlan,
+        plan: userPlan,
         model_main_reply: mainReplyModel,
         conversations_used: conversationsUsed,
         limit,
@@ -6437,13 +6875,11 @@ Rules:
         activeConversations = Number(activeWithState.count || 0);
       }
 
-      const normalizedPlan = await loadUserPlan(userId);
-      const planLimits = getPlanLimits(normalizedPlan);
+      const userPlan = await loadUserPlan(userId);
+      const maxMessages = await loadBusinessMaxMessages(userId);
       const monthStartIso = getMonthStartIso(now);
       const usedConversationsThisMonth = await countMonthlyAiConversations(userId, monthStartIso);
-      const planLimit = Number.isFinite(planLimits.maxConversationsPerMonth)
-        ? Number(planLimits.maxConversationsPerMonth)
-        : null;
+      const planLimit = (maxMessages !== null && maxMessages > 0) ? maxMessages : null;
       const usagePercent = planLimit ? Math.round((usedConversationsThisMonth / planLimit) * 100) : null;
       let usageWarningLevel = null;
       if (planLimit) {
@@ -6458,7 +6894,7 @@ Rules:
         escalationsToday: Number(escalationsCount || 0),
         humanRepliesToday: Number(humanRepliesCount || 0),
         activeConversations,
-        plan: planLimits.plan,
+        plan: userPlan,
         usedConversationsThisMonth,
         monthlyConversationLimit: planLimit,
         usagePercent,
@@ -6505,6 +6941,40 @@ Rules:
     }
   });
 
+  /* ================================
+    WIX PAYMENT WEBHOOK — ONBOARDING
+  ================================ */
+  app.post("/webhooks/wix/payment", async (req, res) => {
+    try {
+      // Verify webhook secret
+      if (!String(process.env.WIX_WEBHOOK_SECRET || "").trim()) {
+        return res.status(500).json({ error: "Server missing WIX_WEBHOOK_SECRET env var" });
+      }
+
+      const secretHeader =
+        req.get("x-wix-secret") || req.get("authorization") || req.get("x-webhook-secret");
+      if (!wixWebhookService.verifySecret(secretHeader)) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      // Expire stale trials on each webhook (lightweight, idempotent)
+      await wixPaymentService.checkExpiredTrials().catch((e) =>
+        console.warn("⚠️ Trial expiry check failed:", e?.message || e)
+      );
+
+      const result = await wixPaymentService.handlePaymentWebhook(req.body || {});
+      return res.status(200).json(result);
+    } catch (err) {
+      const statusCode = Number(err?.statusCode) || 500;
+      if (statusCode >= 500) {
+        console.error("❌ Wix payment webhook failed:", err?.message || err);
+      }
+      const responseError =
+        statusCode >= 500 ? SERVER_ERROR_MESSAGE : String(err?.message || "Request failed");
+      return res.status(statusCode).json({ error: responseError });
+    }
+  });
+
   app.post("/api/chat", publicRateLimit, async (req, res) => {
     try {
       const businessId = String(req.body?.business_id || "").trim();
@@ -6519,7 +6989,7 @@ Rules:
 
       const businessQuery = await supabaseAdmin
         .from("businesses")
-        .select("id,name,plan")
+        .select("id,name,plan,max_messages,ai_model")
         .eq("id", businessId)
         .maybeSingle();
 
@@ -6549,7 +7019,7 @@ Rules:
 
       const monthlyStatus = await usageService.getMonthlyUsageStatus({
         businessId,
-        plan: business.plan,
+        maxMessages: business.max_messages,
       });
       if (monthlyStatus.isOverLimit) {
         return res.status(429).json({
@@ -6585,6 +7055,7 @@ Rules:
         businessName: business.name || businessId,
         message,
         knowledgeBase,
+        model: business.ai_model || "gpt-4o-mini",
       });
 
       const nextUsage = await usageService.incrementMonthlyUsage({
@@ -6597,6 +7068,9 @@ Rules:
         tokensUsed: aiResult.tokensUsed,
         date: usageService.getDateKey(),
       });
+      try {
+        await monthlyStatsService.incrementMonthlyStat({ businessId, statName: "ai_messages_sent" });
+      } catch (_e) { /* non-critical */ }
 
       return res.status(200).json({
         ok: true,
@@ -6654,105 +7128,38 @@ Rules:
   /* ================================
     START SERVER
   ================================ */
-  // eslint-disable-next-line sonarjs/cognitive-complexity
-  app.post("/webhooks/wix/plan-purchased", async (req, res) => {
-    try {
-      // 1) Verify secret header
-      const normalizeSecret = (value) =>
-        String(value || "")
-          .replaceAll(/[\u200B-\u200D\uFEFF]/g, "")
-          .replaceAll(/[\r\n\t]/g, "")
-          .trim();
-
-      const headerSecret = normalizeSecret(req.get("x-wix-secret"));
-      const envSecret = normalizeSecret(process.env.WIX_WEBHOOK_SECRET);
-
-      if (!envSecret) {
-        return res.status(500).json({ error: "Server missing WIX_WEBHOOK_SECRET env var" });
-      }
-
-      const secretsMatch =
-        headerSecret.length === envSecret.length &&
-        crypto.timingSafeEqual(Buffer.from(headerSecret), Buffer.from(envSecret));
-
-      if (!headerSecret || !secretsMatch) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-
-      // 2) Read payload from Wix (or from your curl test)
-      const { email, wixPlanId, wixPlanName } = req.body || {};
-      if (!email) return res.status(400).json({ error: "Missing email" });
-
-      // 3) Map Wix plan → internal plan
-      let plan = "starter";
-      if (wixPlanId && wixPlanId === process.env.WIX_PLAN_PRO_ID) plan = "pro";
-      if (wixPlanId && wixPlanId === process.env.WIX_PLAN_BUSINESS_ID) plan = "enterprise";
-
-      // fallback by name (optional)
-      if (!wixPlanId && typeof wixPlanName === "string") {
-        const n = wixPlanName.toLowerCase();
-        if (n.includes("pro")) plan = "pro";
-        if (n.includes("business") || n.includes("enterprise")) plan = "enterprise";
-        if (n.includes("standard") || n.includes("basic") || n.includes("starter")) plan = "starter";
-      }
-
-      // 4) Ensure Supabase user exists (create if missing)
-      // If user already exists, createUser will error — we ignore that.
-      await supabaseAdmin.auth.admin
-        .createUser({ email, email_confirm: true })
-        .catch(() => {});
-
-      // ⚠️ MVP approach: find user by scanning a page of users.
-      // Later we’ll replace this with a proper mapping table.
-      const { data: listData, error: listErr } =
-        await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 200 });
-
-      if (listErr) return res.status(500).json({ error: listErr.message });
-
-      const user = listData?.users?.find(
-        (u) => (u.email || "").toLowerCase() === email.toLowerCase()
-      );
-
-      if (!user) {
-        return res.status(500).json({ error: "Could not find/create user" });
-      }
-
-      // 5) Upsert plan in client_settings
-      const { error: upsertErr } = await supabaseAdmin
-        .from("client_settings")
-        .upsert(
-          { user_id: user.id, plan, updated_at: new Date().toISOString() },
-          { onConflict: "user_id" }
-        );
-
-      if (upsertErr) return res.status(500).json({ error: upsertErr.message });
-
-      // 6) Generate a Magic Link
-      const redirectTo = process.env.DASHBOARD_REDIRECT_URL;
-      const { data: linkData, error: linkErr } =
-        await supabaseAdmin.auth.admin.generateLink({
-          type: "magiclink",
-          email,
-          options: redirectTo ? { redirectTo } : undefined,
-        });
-
-      if (linkErr) return res.status(500).json({ error: linkErr.message });
-
-      // linkData.properties.action_link contains the link (Supabase emails it if email provider is configured)
-      return res.json({
-        ok: true,
-        plan,
-        userId: user.id,
-        actionLink: linkData?.properties?.action_link || null,
-      });
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
-    }
-  });
-
   app.listen(PORT, () => {
     console.log(`\n✅ SupportPilot backend running on http://localhost:${PORT}\n`);
     setInterval(runOneQueuedJob, JOB_WORKER_POLL_MS);
     console.log(`🧰 Job worker started (poll: ${JOB_WORKER_POLL_MS}ms)`);
   });
+
+  
+  app.post("/webhook-test", async (req, res) => {
+  console.log("TEST WEBHOOK HIT");
+
+  const message =
+    req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+
+  if (!message) return res.sendStatus(200);
+
+  const from = message.from;
+
+  await fetch(
+    "https://graph.facebook.com/v19.0/YOUR_PHONE_NUMBER_ID/messages",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: from,
+        text: { body: "Working ✅ (test route)" },
+      }),
+    }
+  );
+
+  res.sendStatus(200);
+});

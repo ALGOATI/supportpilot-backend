@@ -1,3 +1,21 @@
+// Customer-facing messages when a business is inactive.
+// Deliberately vague — don't expose internal subscription details.
+const INACTIVE_REPLY = {
+  en: "This service is temporarily unavailable. Please contact the business directly.",
+  sv: "Denna tjänst är tillfälligt otillgänglig. Vänligen kontakta företaget direkt.",
+  ar: "هذه الخدمة غير متوفرة مؤقتاً. يرجى التواصل مع النشاط التجاري مباشرة.",
+};
+
+function detectLanguageFromText(text) {
+  if (/[\u0600-\u06FF]/.test(text)) return "ar";
+  if (/[\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u017E]/.test(text)) return "sv";
+  return "en";
+}
+
+function getInactiveReply(language = "en") {
+  return INACTIVE_REPLY[language] || INACTIVE_REPLY.en;
+}
+
 export function createWhatsAppAdapter(deps) {
   const {
     supabaseAdmin,
@@ -5,6 +23,9 @@ export function createWhatsAppAdapter(deps) {
     engine,
     getClientWhatsAppConfig,
     findClientByPhoneNumberId,
+    isBusinessActive,
+    incrementMonthlyUsage,
+    incrementMonthlyStat,
   } = deps;
 
   async function sendWhatsAppTextMessage({ to, text, clientConfig }) {
@@ -335,6 +356,28 @@ export function createWhatsAppAdapter(deps) {
           continue;
         }
 
+        // Gate: check plan is active and within message limit BEFORE calling AI
+        if (typeof isBusinessActive === "function") {
+          stage = "checkBusinessActive";
+          const activeCheck = await isBusinessActive(clientId);
+          if (!activeCheck.active) {
+            console.log(`⛔ [WA] Business ${clientId} inactive (${activeCheck.reason}) — message blocked`);
+            try {
+              const cfg = getClientWhatsAppConfig
+                ? await getClientWhatsAppConfig(clientId)
+                : null;
+              await sendWhatsAppTextMessage({
+                to: from,
+                text: getInactiveReply(detectLanguageFromText(incomingText)),
+                clientConfig: cfg,
+              });
+            } catch (sendErr) {
+              console.error("[WA] Failed to send inactive notice:", sendErr?.message || sendErr);
+            }
+            continue;
+          }
+        }
+
         stage = "handleIncomingMessage";
         const result = await engine.handleIncomingMessage({
           userId: clientId,
@@ -352,6 +395,20 @@ export function createWhatsAppAdapter(deps) {
             ? await getClientWhatsAppConfig(clientId)
             : null;
           await sendWhatsAppTextMessage({ to: from, text: result.reply, clientConfig });
+
+          // Increment usage counter after a successful AI reply is delivered
+          if (typeof incrementMonthlyUsage === "function") {
+            try {
+              await incrementMonthlyUsage({ businessId: clientId });
+            } catch (usageErr) {
+              console.error("[WA] Usage increment failed:", usageErr?.message || usageErr);
+            }
+          }
+          if (typeof incrementMonthlyStat === "function") {
+            try {
+              await incrementMonthlyStat({ businessId: clientId, statName: "ai_messages_sent" });
+            } catch (_e) { /* non-critical */ }
+          }
         } else {
           console.log("[WA DEBUG] webhook:skip_send_no_ai_reply", {
             from,

@@ -8,6 +8,7 @@ export function createConversationStore(deps) {
     reserveWhatsAppInboundMessage: deps.reserveWhatsAppInboundMessage,
     loadBusinessTimezone: deps.loadBusinessTimezone,
     loadUserPlan: deps.loadUserPlan,
+    loadBusinessMaxMessages: deps.loadBusinessMaxMessages,
     getPlanLimits: deps.getPlanLimits,
     countMonthlyAiConversations: deps.countMonthlyAiConversations,
     reserveConversationUsageAndIncrement: deps.reserveConversationUsageAndIncrement,

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getPlanDefaults, getTierFromWixPlanId } from "../../config/planConfig.js";
 
 function normalizeSecret(value) {
   return String(value || "")
@@ -75,17 +76,17 @@ function resolvePlanFromPayload(payload) {
 
   if (!planIdRaw && !planNameRaw) return null;
 
-  if (planIdRaw && planIdRaw === String(process.env.WIX_PLAN_PRO_ID || "").trim()) return "pro";
-  if (
-    planIdRaw &&
-    planIdRaw === String(process.env.WIX_PLAN_BUSINESS_ID || "").trim()
-  ) {
-    return "enterprise";
+  // Resolve by Wix plan UUID (covers all 4 tiers)
+  if (planIdRaw) {
+    const tier = getTierFromWixPlanId(planIdRaw);
+    if (tier) return tier;
   }
 
+  // Fallback: match by plan name
+  if (planNameRaw.includes("trial")) return "trial";
   if (planNameRaw.includes("pro")) return "pro";
-  if (planNameRaw.includes("enterprise") || planNameRaw.includes("business")) {
-    return "enterprise";
+  if (planNameRaw.includes("business") || planNameRaw.includes("enterprise")) {
+    return "business";
   }
   return "starter";
 }
@@ -160,6 +161,7 @@ function getPlanDates(payload) {
   return { startedAt, expiresAt };
 }
 
+
 export function createWixWebhookService({
   supabaseAdmin,
   usageService,
@@ -229,17 +231,22 @@ export function createWixWebhookService({
     }
 
     const nextPlan = cancellation ? "starter" : resolvedPlan;
+    const tierDefaults = getPlanDefaults(nextPlan);
     const nowIso = new Date().toISOString();
 
     const updatePayload = cancellation
       ? {
           plan: "starter",
+          max_messages: tierDefaults.max_messages,
+          ai_model: tierDefaults.ai_model,
           plan_started_at: null,
           plan_expires_at: expiresAt || nowIso,
           wix_order_id: orderId,
         }
       : {
           plan: nextPlan,
+          max_messages: tierDefaults.max_messages,
+          ai_model: tierDefaults.ai_model,
           plan_started_at: startedAt || nowIso,
           plan_expires_at: expiresAt,
           wix_order_id: orderId,
