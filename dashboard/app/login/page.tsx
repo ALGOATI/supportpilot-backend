@@ -1,8 +1,6 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
-import { useRouter } from "next/navigation";
-import { getBackendUrl } from "@/lib/backend-url";
 import { DashboardLanguage, t } from "@/lib/i18n";
 
 function maskEmail(email: string): string {
@@ -14,13 +12,8 @@ function maskEmail(email: string): string {
   return `${visible}***${domain}`;
 }
 
-type Tab = "magic" | "password";
-
 export default function LoginPage() {
-  const router = useRouter();
-  const [tab, setTab] = useState<Tab>("magic");
   const [email, setEmail] = useState("");
-  const [secret, setSecret] = useState("");
   const [language, setLanguage] = useState<DashboardLanguage>("swedish");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,58 +87,6 @@ export default function LoginPage() {
     }
 
     startCooldown();
-  }
-
-  async function login() {
-    if (!email.trim() || !secret) return;
-    setLoading(true);
-    setError(null);
-
-    const { error: loginError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password: secret,
-    });
-
-    if (loginError) {
-      setError(loginError.message);
-      setLoading(false);
-      return;
-    }
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    const backendUrl = getBackendUrl();
-
-    if (!token) {
-      router.push("/dashboard");
-      return;
-    }
-
-    try {
-      const setupResp = await fetch(`${backendUrl}/api/setup/status`, {
-        cache: "no-store",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!setupResp.ok) {
-        router.push("/dashboard");
-        return;
-      }
-      const setupJson = await setupResp.json();
-      router.push(setupJson?.completed ? "/dashboard" : "/setup");
-    } catch {
-      router.push("/dashboard");
-    }
-  }
-
-  async function signup() {
-    if (!email.trim() || !secret) return;
-    const { error: signupError } = await supabase.auth.signUp({ email: email.trim(), password: secret });
-    if (signupError) {
-      setError(signupError.message);
-    } else {
-      setError(null);
-      alert(tr("account_created_msg"));
-    }
   }
 
   const resendLabel =
@@ -237,81 +178,28 @@ export default function LoginPage() {
       {langSwitcher}
       <h1 style={{ marginBottom: 20 }}>{tr("login_title")}</h1>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", marginBottom: 20, borderBottom: "2px solid #e5e7eb" }}>
-        {(["magic", "password"] as Tab[]).map((tabKey) => (
-          <button
-            key={tabKey}
-            onClick={() => { setTab(tabKey); setError(null); }}
-            style={{
-              padding: "8px 16px",
-              background: "none",
-              border: "none",
-              borderBottom: tab === tabKey ? "2px solid #111827" : "2px solid transparent",
-              marginBottom: -2,
-              fontWeight: tab === tabKey ? 700 : 400,
-              fontSize: 14,
-              cursor: "pointer",
-              color: tab === tabKey ? "#111827" : "#6b7280",
-            }}
-          >
-            {tabKey === "magic" ? tr("login_magic_link_tab") : tr("login_password_tab")}
-          </button>
-        ))}
-      </div>
-
       {error && (
         <p style={{ color: "#dc2626", marginBottom: 12, fontSize: 14 }}>{error}</p>
       )}
 
-      {tab === "magic" && (
-        <>
-          <p style={{ marginBottom: 12, fontSize: 14, color: "#374151" }}>
-            {tr("login_magic_link_description")}
-          </p>
-          <input
-            type="email"
-            placeholder={tr("email_placeholder")}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && sendMagicLink()}
-            style={{ width: "100%", marginBottom: 10 }}
-          />
-          <button
-            onClick={sendMagicLink}
-            disabled={loading}
-            style={{ width: "100%" }}
-          >
-            {loading ? tr("sending") : tr("login_magic_link_button")}
-          </button>
-        </>
-      )}
-
-      {tab === "password" && (
-        <>
-          <input
-            type="email"
-            placeholder={tr("email_placeholder")}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: "100%", marginBottom: 10 }}
-          />
-          <input
-            type="password"
-            placeholder={tr("secret_placeholder")}
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && login()}
-            style={{ width: "100%", marginBottom: 10 }}
-          />
-          <button onClick={login} disabled={loading} style={{ marginInlineEnd: 10 }}>
-            {loading ? tr("loading") : tr("login_title")}
-          </button>
-          <button onClick={signup} disabled={loading}>
-            {tr("sign_up")}
-          </button>
-        </>
-      )}
+      <p style={{ marginBottom: 12, fontSize: 14, color: "#374151" }}>
+        {tr("login_magic_link_description")}
+      </p>
+      <input
+        type="email"
+        placeholder={tr("email_placeholder")}
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && sendMagicLink()}
+        style={{ width: "100%", marginBottom: 10 }}
+      />
+      <button
+        onClick={sendMagicLink}
+        disabled={loading}
+        style={{ width: "100%" }}
+      >
+        {loading ? tr("sending") : tr("login_magic_link_button")}
+      </button>
     </div>
   );
 }
