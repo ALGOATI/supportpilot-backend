@@ -107,6 +107,8 @@ const english: Dictionary = {
   login_resend_link: "Resend link",
   login_resend_cooldown: "Resend in {seconds}s",
   login_back: "Back to login",
+  login_email_not_found: "This email is not registered. Please purchase a plan at our website to get started.",
+  login_view_plans: "View plans and get started \u2192",
   // Analytics
   analytics_subtitle: "Channel and performance metrics",
   messages_today: "Messages today",
@@ -348,6 +350,8 @@ const swedish: Dictionary = {
   login_resend_link: "Skicka igen",
   login_resend_cooldown: "Skicka igen om {seconds}s",
   login_back: "Tillbaka till inloggning",
+  login_email_not_found: "Den h\u00e4r e-posten \u00e4r inte registrerad. V\u00e4nligen k\u00f6p en plan p\u00e5 v\u00e5r webbplats f\u00f6r att komma ig\u00e5ng.",
+  login_view_plans: "Se planer och kom ig\u00e5ng \u2192",
   // Analytics
   analytics_subtitle: "Kanal och prestandamätningar",
   messages_today: "Meddelanden idag",
@@ -586,6 +590,8 @@ const arabic: Dictionary = {
   login_resend_link: "إعادة الإرسال",
   login_resend_cooldown: "إعادة الإرسال خلال {seconds} ثانية",
   login_back: "العودة لتسجيل الدخول",
+  login_email_not_found: "هذا البريد الإلكتروني غير مسجل. يرجى شراء خطة من موقعنا للبدء.",
+  login_view_plans: "عرض الخطط والبدء \u2190",
   analytics_subtitle: "مقاييس القناة والأداء",
   messages_today: "الرسائل اليوم",
   messages_7d: "الرسائل (7 أيام)",

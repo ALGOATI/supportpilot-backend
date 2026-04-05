@@ -7013,6 +7013,29 @@ Rules:
     }
   });
 
+  /* ================================
+    CHECK EMAIL EXISTS (pre-login)
+  ================================ */
+  app.post("/api/auth/check-email", publicRateLimit, async (req, res) => {
+    try {
+      const email = String(req.body?.email || "").trim().toLowerCase();
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      const { data: business } = await supabaseAdmin
+        .from("businesses")
+        .select("id")
+        .eq("owner_email", email)
+        .maybeSingle();
+
+      return res.json({ exists: !!business });
+    } catch (err) {
+      console.error("Check email error:", err?.message || err);
+      return res.status(500).json({ error: "Internal error" });
+    }
+  });
+
   app.post("/api/chat", publicRateLimit, async (req, res) => {
     try {
       const businessId = String(req.body?.business_id || "").trim();

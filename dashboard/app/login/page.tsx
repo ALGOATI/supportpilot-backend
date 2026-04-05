@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
+import { getBackendUrl } from "@/lib/backend-url";
 import { DashboardLanguage, t, isRtlLanguage } from "@/lib/i18n";
 
 function maskEmail(e: string) {
@@ -49,22 +50,51 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+    try {
+      // Check if email exists in our system before sending OTP
+      const backendUrl = getBackendUrl();
+      const checkRes = await fetch(`${backendUrl}/api/auth/check-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
 
-    setLoading(false);
-    if (error) {
-      setError(error.message);
-      return;
+      if (!checkRes.ok) {
+        setError("Unable to verify email. Please try again.");
+        setLoading(false);
+        return;
+      }
+
+      const { exists } = await checkRes.json();
+
+      if (!exists) {
+        setError(tr("login_email_not_found"));
+        setLoading(false);
+        return;
+      }
+
+      // Email exists — send the magic link
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: {
+          shouldCreateUser: false,
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      setLoading(false);
+      if (error) {
+        setError(error.message);
+        return;
+      }
+
+      setSentTo(email.trim());
+      setEmailSent(true);
+      startCooldown();
+    } catch {
+      setError("Unable to verify email. Please try again.");
+      setLoading(false);
     }
-
-    setSentTo(email.trim());
-    setEmailSent(true);
-    startCooldown();
   }
 
   async function resendMagicLink() {
@@ -75,6 +105,7 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithOtp({
       email: sentTo,
       options: {
+        shouldCreateUser: false,
         emailRedirectTo: `${window.location.origin}/auth/callback`,
       },
     });
@@ -187,7 +218,28 @@ export default function LoginPage() {
         <h1 style={styles.heading}>{tr("login_title")}</h1>
         <p style={styles.subtext}>{tr("login_magic_link_description")}</p>
 
-        {error && <p style={styles.error}>{error}</p>}
+        {error && (
+          <div>
+            <p style={styles.error}>{error}</p>
+            {error === tr("login_email_not_found") && (
+              <a
+                href="https://www.supportpilot.co/pricing"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: "block",
+                  marginTop: 8,
+                  fontSize: 14,
+                  color: "#2563eb",
+                  textDecoration: "underline",
+                  textUnderlineOffset: 2,
+                }}
+              >
+                {tr("login_view_plans")}
+              </a>
+            )}
+          </div>
+        )}
 
         <div style={{ marginTop: 24, display: "grid", gap: 12 }}>
           <input
