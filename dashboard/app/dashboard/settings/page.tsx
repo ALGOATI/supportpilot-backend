@@ -71,6 +71,13 @@ export default function SettingsPage() {
   const [waSaving, setWaSaving] = useState(false);
   const [waStatus, setWaStatus] = useState<string | null>(null);
 
+  // Calendar integration state
+  const [calFeedUrl, setCalFeedUrl] = useState<string | null>(null);
+  const [calCopied, setCalCopied] = useState(false);
+  const [calGoogleConnected, setCalGoogleConnected] = useState(false);
+  const [calGoogleLoading, setCalGoogleLoading] = useState(false);
+  const [calPlan, setCalPlan] = useState<string>("starter");
+
   useEffect(() => {
     let cancelled = false;
 
@@ -115,6 +122,7 @@ export default function SettingsPage() {
           const releaseJson = (await releaseResp.json()) as ReleaseStatusResponse;
           setReleaseStatus(releaseJson);
           setReleaseError(null);
+          if (releaseJson.plan) setCalPlan(releaseJson.plan);
         } else {
           setReleaseError("Failed to load release readiness.");
         }
@@ -134,6 +142,31 @@ export default function SettingsPage() {
         } catch {
           // Non-critical — WhatsApp status load failure is safe to ignore
         }
+
+        // Load calendar integration status
+        try {
+          const [feedResp, googleResp] = await Promise.all([
+            fetch(`${backendUrl}/api/calendar/feed-url`, {
+              cache: "no-store",
+              headers: { Authorization: `Bearer ${token}` },
+            }),
+            fetch(`${backendUrl}/api/calendar/google/status`, {
+              cache: "no-store",
+              headers: { Authorization: `Bearer ${token}` },
+            }),
+          ]);
+          if (feedResp.ok) {
+            const feedJson = await feedResp.json();
+            if (feedJson.feed_url) setCalFeedUrl(feedJson.feed_url);
+          }
+          if (googleResp.ok) {
+            const googleJson = await googleResp.json();
+            setCalGoogleConnected(!!googleJson.connected);
+          }
+        } catch {
+          // Non-critical — calendar status load failure is safe to ignore
+        }
+
       }
 
       if (!cancelled) setLoading(false);
@@ -221,6 +254,74 @@ export default function SettingsPage() {
     }
 
     setWaSaving(false);
+  }
+
+  async function copyFeedUrl() {
+    if (!calFeedUrl) return;
+    try {
+      await navigator.clipboard.writeText(calFeedUrl);
+      setCalCopied(true);
+      setTimeout(() => setCalCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const input = document.createElement("input");
+      input.value = calFeedUrl;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      document.body.removeChild(input);
+      setCalCopied(true);
+      setTimeout(() => setCalCopied(false), 2000);
+    }
+  }
+
+  async function connectGoogleCalendar() {
+    setCalGoogleLoading(true);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) {
+      setCalGoogleLoading(false);
+      return;
+    }
+
+    try {
+      const resp = await fetch(`${backendUrl}/api/calendar/google/connect`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await resp.json();
+      if (resp.ok && json.auth_url) {
+        window.location.href = json.auth_url;
+      } else {
+        alert(json.error || t(dashboardLanguage, "calendar_google_error"));
+        setCalGoogleLoading(false);
+      }
+    } catch {
+      alert(t(dashboardLanguage, "calendar_google_error"));
+      setCalGoogleLoading(false);
+    }
+  }
+
+  async function disconnectGoogleCalendar() {
+    setCalGoogleLoading(true);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) {
+      setCalGoogleLoading(false);
+      return;
+    }
+
+    try {
+      const resp = await fetch(`${backendUrl}/api/calendar/google/disconnect`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.ok) {
+        setCalGoogleConnected(false);
+      }
+    } catch {
+      // ignore
+    }
+    setCalGoogleLoading(false);
   }
 
   async function save() {
@@ -479,6 +580,173 @@ export default function SettingsPage() {
               {waStatus}
             </div>
           )}
+        </div>
+
+        {/* Calendar Integration */}
+        <div
+          style={{
+            border: "1px solid rgba(0,0,0,0.12)",
+            borderRadius: 14,
+            padding: 14,
+            background: "white",
+          }}
+        >
+          <div style={{ fontWeight: 900, marginBottom: 8, color: "#111827" }}>
+            {t(dashboardLanguage, "calendar_integration")}
+          </div>
+
+          {/* ICS Feed URL — available on all plans */}
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: "#334155", marginBottom: 6 }}>
+              {t(dashboardLanguage, "calendar_feed_url")}
+            </div>
+            <p style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+              {t(dashboardLanguage, "calendar_feed_description")}
+            </p>
+
+            {calFeedUrl ? (
+              <>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <input
+                    type="text"
+                    readOnly
+                    value={calFeedUrl}
+                    style={{
+                      flex: 1,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      border: "1px solid rgba(0,0,0,0.15)",
+                      fontSize: 12,
+                      color: "#475569",
+                      background: "#f8fafc",
+                    }}
+                  />
+                  <button
+                    onClick={copyFeedUrl}
+                    style={{
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: "1px solid rgba(0,0,0,0.15)",
+                      background: calCopied ? "#dcfce7" : "white",
+                      color: calCopied ? "#166534" : "#111827",
+                      cursor: "pointer",
+                      fontWeight: 800,
+                      fontSize: 12,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {calCopied
+                      ? t(dashboardLanguage, "calendar_copied")
+                      : t(dashboardLanguage, "calendar_copy_url")}
+                  </button>
+                </div>
+
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                    {t(dashboardLanguage, "calendar_how_to_add")}:
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: 16, display: "grid", gap: 2 }}>
+                    <li>{t(dashboardLanguage, "calendar_google_instructions")}</li>
+                    <li>{t(dashboardLanguage, "calendar_apple_instructions")}</li>
+                    <li>{t(dashboardLanguage, "calendar_outlook_instructions")}</li>
+                  </ul>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                {t(dashboardLanguage, "calendar_loading")}
+              </div>
+            )}
+          </div>
+
+          {/* Google Calendar Sync — Pro/Business only */}
+          <div
+            style={{
+              borderTop: "1px solid rgba(0,0,0,0.08)",
+              paddingTop: 14,
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13, color: "#334155", marginBottom: 8 }}>
+              {t(dashboardLanguage, "calendar_google_sync")}
+            </div>
+
+            {calPlan === "pro" || calPlan === "business" || calPlan === "enterprise" ? (
+              <>
+                <div
+                  style={{
+                    display: "inline-flex",
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    fontSize: 12,
+                    fontWeight: 800,
+                    color: calGoogleConnected ? "#166534" : "#92400e",
+                    background: calGoogleConnected ? "#dcfce7" : "#fef3c7",
+                    marginBottom: 10,
+                  }}
+                >
+                  {calGoogleConnected
+                    ? t(dashboardLanguage, "calendar_google_connected")
+                    : t(dashboardLanguage, "calendar_google_not_connected")}
+                </div>
+
+                <div>
+                  {calGoogleConnected ? (
+                    <button
+                      onClick={disconnectGoogleCalendar}
+                      disabled={calGoogleLoading}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 10,
+                        border: "1px solid #ef4444",
+                        background: "white",
+                        color: "#ef4444",
+                        cursor: calGoogleLoading ? "not-allowed" : "pointer",
+                        fontWeight: 800,
+                        fontSize: 13,
+                      }}
+                    >
+                      {calGoogleLoading
+                        ? t(dashboardLanguage, "calendar_disconnecting")
+                        : t(dashboardLanguage, "calendar_disconnect_google")}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={connectGoogleCalendar}
+                      disabled={calGoogleLoading}
+                      style={{
+                        padding: "10px 14px",
+                        borderRadius: 12,
+                        border: "1px solid rgba(0,0,0,0.15)",
+                        background: calGoogleLoading ? "#eee" : "#111827",
+                        color: calGoogleLoading ? "#999" : "white",
+                        cursor: calGoogleLoading ? "not-allowed" : "pointer",
+                        fontWeight: 900,
+                        fontSize: 13,
+                      }}
+                    >
+                      {calGoogleLoading
+                        ? t(dashboardLanguage, "calendar_connecting")
+                        : t(dashboardLanguage, "calendar_connect_google")}
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  background: "#f8fafc",
+                  border: "1px solid rgba(0,0,0,0.08)",
+                  fontSize: 13,
+                  color: "#64748b",
+                  fontWeight: 600,
+                }}
+              >
+                {t(dashboardLanguage, "calendar_upgrade_notice")}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Business Info */}

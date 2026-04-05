@@ -60,13 +60,20 @@ export function createMonthlyStatsService({ supabaseAdmin }) {
       .maybeSingle();
 
     if (error) throw new Error(error.message);
-    return data || {
+    const stats = data || {
       ai_conversations_handled: 0,
       ai_messages_sent: 0,
       human_escalations: 0,
       total_inbound_messages: 0,
       avg_response_time_ms: 0,
+      total_response_time_ms: 0,
+      response_time_count: 0,
     };
+    // Compute avg from running totals (overrides the stored column)
+    const totalMs = Number(stats.total_response_time_ms) || 0;
+    const count = Number(stats.response_time_count) || 0;
+    stats.avg_response_time_ms = count > 0 ? Math.round(totalMs / count) : 0;
+    return stats;
   }
 
   function computeDerivedStats(stats) {

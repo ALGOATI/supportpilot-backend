@@ -703,6 +703,15 @@ ${business}
     if (!text || !String(text).trim()) throw new Error("Missing text");
     const normalizedText = String(text).trim();
 
+    // Track every inbound message for analytics
+    if (typeof incrementMonthlyStat === "function") {
+      try {
+        await incrementMonthlyStat({ businessId: userId, statName: "total_inbound_messages" });
+      } catch (_e) { /* non-critical */ }
+    }
+
+    const _replyStartMs = Date.now();
+
     let resolvedConversationId = conversationId;
     let resolvedExternalConversationId = externalConversationId;
     let resolvedExternalUserId = externalUserId;
@@ -1079,6 +1088,12 @@ ${business}
           if (isEscalationTransition) {
             await incrementMonthlyStat({ businessId: userId, statName: "human_escalations" });
           }
+          // Track response time for running average
+          const _replyElapsedMs = Date.now() - _replyStartMs;
+          if (_replyElapsedMs > 0 && _replyElapsedMs < 300000) {
+            await incrementMonthlyStat({ businessId: userId, statName: "total_response_time_ms", delta: _replyElapsedMs });
+            await incrementMonthlyStat({ businessId: userId, statName: "response_time_count" });
+          }
         } catch (_e) { /* non-critical */ }
       }
 
@@ -1360,6 +1375,12 @@ ${business}
         }
         if (isEscalationTransition) {
           await incrementMonthlyStat({ businessId: userId, statName: "human_escalations" });
+        }
+        // Track response time for running average
+        const _replyElapsedMs = Date.now() - _replyStartMs;
+        if (_replyElapsedMs > 0 && _replyElapsedMs < 300000) {
+          await incrementMonthlyStat({ businessId: userId, statName: "total_response_time_ms", delta: _replyElapsedMs });
+          await incrementMonthlyStat({ businessId: userId, statName: "response_time_count" });
         }
       } catch (_e) { /* non-critical */ }
     }

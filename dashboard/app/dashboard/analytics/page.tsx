@@ -34,6 +34,13 @@ type UsageSummary = {
   days_until_reset: number;
 };
 
+type TodayStats = {
+  total_inbound: number;
+  ai_messages_sent: number;
+  ai_conversations_handled: number;
+  human_escalations: number;
+};
+
 const EMPTY_MONTHLY: MonthlyStats = {
   current_month: "",
   previous_month: "",
@@ -66,6 +73,7 @@ export default function AnalyticsPage() {
   const [dailyVolume, setDailyVolume] = useState<DayVolume[]>([]);
   const [topQuestions, setTopQuestions] = useState<TopQuestion[]>([]);
   const [usage, setUsage] = useState<UsageSummary | null>(null);
+  const [today, setToday] = useState<TodayStats>({ total_inbound: 0, ai_messages_sent: 0, ai_conversations_handled: 0, human_escalations: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -82,11 +90,12 @@ export default function AnalyticsPage() {
       const backendUrl = getBackendUrl();
       const headers = { Authorization: `Bearer ${token}` };
 
-      const [statsRes, volumeRes, questionsRes, usageRes] = await Promise.all([
+      const [statsRes, volumeRes, questionsRes, usageRes, todayRes] = await Promise.all([
         fetch(`${backendUrl}/api/analytics/monthly-stats`, { headers }).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch(`${backendUrl}/api/analytics/daily-volume`, { headers }).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch(`${backendUrl}/api/analytics/top-questions`, { headers }).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch(`${backendUrl}/api/analytics/usage-summary`, { headers }).then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${backendUrl}/api/analytics/today-stats`, { headers }).then(r => r.ok ? r.json() : null).catch(() => null),
       ]);
 
       if (cancelled) return;
@@ -95,6 +104,7 @@ export default function AnalyticsPage() {
       if (volumeRes?.days) setDailyVolume(volumeRes.days);
       if (questionsRes?.questions) setTopQuestions(questionsRes.questions);
       if (usageRes) setUsage(usageRes);
+      if (todayRes) setToday(todayRes);
 
       setLoading(false);
     })();
@@ -109,7 +119,18 @@ export default function AnalyticsPage() {
           <p style={{ marginTop: 16 }}>{tr("loading")}</p>
         ) : (
           <>
-            {/* Top row: 4 key value cards */}
+            {/* Today's snapshot */}
+            <section style={{ ...panel, marginTop: 16 }}>
+              <h2 style={{ ...sectionTitle, marginBottom: 10 }}>{tr("messages_today")}</h2>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+                <MiniStat label={tr("ai_conversations_today")} value={today.ai_conversations_handled} />
+                <MiniStat label={tr("ai_messages_sent")} value={today.ai_messages_sent} />
+                <MiniStat label={tr("escalations_today")} value={today.human_escalations} warn={today.human_escalations > 0} />
+                <MiniStat label={tr("messages_today")} value={today.total_inbound} />
+              </div>
+            </section>
+
+            {/* This month: 4 key value cards */}
             <div style={topCardGrid}>
               <KeyValueCard
                 title={tr("ai_conversations_handled")}
@@ -134,6 +155,23 @@ export default function AnalyticsPage() {
                 value={`${monthly.hours_saved} hrs`}
                 trend={<TrendIndicator current={monthly.hours_saved} previous={monthly.prev_hours_saved} tr={tr} />}
                 accent="#7C3AED"
+              />
+            </div>
+
+            {/* Second row: Messages sent + Escalations */}
+            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <KeyValueCard
+                title={tr("ai_messages_sent")}
+                value={monthly.ai_messages_sent.toLocaleString()}
+                trend={<TrendIndicator current={monthly.ai_messages_sent} previous={monthly.prev_ai_messages_sent} tr={tr} />}
+              />
+              <EscalationCard
+                title={tr("human_escalations")}
+                count={monthly.human_escalations}
+                total={monthly.ai_conversations_handled}
+                prevCount={monthly.prev_human_escalations}
+                prevTotal={monthly.prev_ai_conversations_handled}
+                tr={tr}
               />
             </div>
 
@@ -233,6 +271,35 @@ function ResolutionCard({ title, rate, prevRate, tr }: Readonly<{
           {rate >= 80 ? "Great" : rate >= 50 ? "OK" : "Needs attention"}
         </span>
         <TrendIndicator current={rate} previous={prevRate} tr={tr} />
+      </div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, warn }: Readonly<{ label: string; value: number; warn?: boolean }>) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontSize: 24, fontWeight: 900, color: warn ? "#DC2626" : "#111827" }}>{value.toLocaleString()}</div>
+      <div style={{ fontSize: 12, color: "#6B7280", marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+function EscalationCard({ title, count, total, prevCount, prevTotal, tr }: Readonly<{
+  title: string; count: number; total: number; prevCount: number; prevTotal: number; tr: (k: string) => string;
+}>) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  const prevPct = prevTotal > 0 ? Math.round((prevCount / prevTotal) * 100) : 0;
+  const color = pct <= 20 ? "#059669" : pct <= 50 ? "#D97706" : "#DC2626";
+  return (
+    <div style={{ ...card, borderLeft: `4px solid ${color}` }}>
+      <div style={{ color: "#374151", fontSize: 13, fontWeight: 700 }}>{title}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 6 }}>
+        <span style={{ fontSize: 28, fontWeight: 900, color: "#111827" }}>{count.toLocaleString()}</span>
+        <span style={{ fontSize: 14, color, fontWeight: 700 }}>({pct}%)</span>
+      </div>
+      <div style={{ marginTop: 4 }}>
+        <TrendIndicator current={pct} previous={prevPct} invertTrend tr={tr} />
       </div>
     </div>
   );

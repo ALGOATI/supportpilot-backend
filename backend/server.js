@@ -6483,6 +6483,44 @@ Rules:
     }
   });
 
+  app.get("/api/analytics/today-stats", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const now = new Date();
+      const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+      const [messagesResult, escalatedResult] = await Promise.all([
+        supabaseAdmin
+          .from("messages")
+          .select("ai_reply,conversation_id")
+          .eq("user_id", userId)
+          .gte("created_at", todayStart.toISOString()),
+        supabaseAdmin
+          .from("conversations")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", userId)
+          .eq("status", "escalated")
+          .gte("created_at", todayStart.toISOString()),
+      ]);
+
+      const rows = messagesResult.data || [];
+      const totalInbound = rows.length;
+      const aiMessages = rows.filter(r => r.ai_reply).length;
+      const aiConversationIds = new Set(rows.filter(r => r.ai_reply).map(r => r.conversation_id));
+      const escalated = escalatedResult.count || 0;
+
+      return res.json({
+        total_inbound: totalInbound,
+        ai_messages_sent: aiMessages,
+        ai_conversations_handled: aiConversationIds.size,
+        human_escalations: escalated,
+      });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
   app.get("/api/analytics/daily-volume", requireSupabaseUser, async (req, res) => {
     try {
       const userId = req.user.id;
