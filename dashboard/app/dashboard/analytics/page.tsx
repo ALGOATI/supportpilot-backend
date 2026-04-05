@@ -5,6 +5,8 @@ import { supabase } from "@/lib/supabase";
 import DashboardShell from "../_components/DashboardShell";
 import { getBackendUrl } from "@/lib/backend-url";
 import { useDashboardLanguage } from "@/lib/useDashboardLanguage";
+import { usePlanFeatures } from "@/lib/usePlanFeatures";
+import UpgradePrompt from "../_components/UpgradePrompt";
 
 type MonthlyStats = {
   current_month: string;
@@ -67,7 +69,8 @@ function formatResponseTime(ms: number) {
 
 export default function AnalyticsPage() {
   const router = useRouter();
-  const { tr } = useDashboardLanguage();
+  const { tr, language } = useDashboardLanguage();
+  const { features } = usePlanFeatures();
   const [loading, setLoading] = useState(true);
   const [monthly, setMonthly] = useState<MonthlyStats>(EMPTY_MONTHLY);
   const [dailyVolume, setDailyVolume] = useState<DayVolume[]>([]);
@@ -130,93 +133,119 @@ export default function AnalyticsPage() {
               </div>
             </section>
 
-            {/* This month: 4 key value cards */}
-            <div style={topCardGrid}>
-              <KeyValueCard
-                title={tr("ai_conversations_handled")}
-                value={monthly.ai_conversations_handled.toLocaleString()}
-                trend={<TrendIndicator current={monthly.ai_conversations_handled} previous={monthly.prev_ai_conversations_handled} tr={tr} />}
-              />
-              <ResolutionCard
-                title={tr("ai_resolution_rate")}
-                rate={monthly.ai_resolution_rate}
-                prevRate={monthly.prev_ai_resolution_rate}
-                tr={tr}
-              />
-              <KeyValueCard
-                title={tr("avg_response_time")}
-                value={formatResponseTime(monthly.avg_response_time_ms)}
-                trend={monthly.prev_avg_response_time_ms > 0 ? (
-                  <TrendIndicator current={monthly.avg_response_time_ms} previous={monthly.prev_avg_response_time_ms} invertTrend tr={tr} />
-                ) : <span style={{ color: "#6B7280", fontSize: 12 }}>{tr("no_previous_data")}</span>}
-              />
-              <KeyValueCard
-                title={tr("hours_saved")}
-                value={`${monthly.hours_saved} hrs`}
-                trend={<TrendIndicator current={monthly.hours_saved} previous={monthly.prev_hours_saved} tr={tr} />}
-                accent="#7C3AED"
-              />
-            </div>
+            {features.full_analytics ? (
+              <>
+                {/* This month: 4 key value cards */}
+                <div style={topCardGrid}>
+                  <KeyValueCard
+                    title={tr("ai_conversations_handled")}
+                    value={monthly.ai_conversations_handled.toLocaleString()}
+                    trend={<TrendIndicator current={monthly.ai_conversations_handled} previous={monthly.prev_ai_conversations_handled} tr={tr} />}
+                  />
+                  <ResolutionCard
+                    title={tr("ai_resolution_rate")}
+                    rate={monthly.ai_resolution_rate}
+                    prevRate={monthly.prev_ai_resolution_rate}
+                    tr={tr}
+                  />
+                  <KeyValueCard
+                    title={tr("avg_response_time")}
+                    value={formatResponseTime(monthly.avg_response_time_ms)}
+                    trend={monthly.prev_avg_response_time_ms > 0 ? (
+                      <TrendIndicator current={monthly.avg_response_time_ms} previous={monthly.prev_avg_response_time_ms} invertTrend tr={tr} />
+                    ) : <span style={{ color: "#6B7280", fontSize: 12 }}>{tr("no_previous_data")}</span>}
+                  />
+                  <KeyValueCard
+                    title={tr("hours_saved")}
+                    value={`${monthly.hours_saved} hrs`}
+                    trend={<TrendIndicator current={monthly.hours_saved} previous={monthly.prev_hours_saved} tr={tr} />}
+                    accent="#7C3AED"
+                  />
+                </div>
 
-            {/* Second row: Messages sent + Escalations */}
-            <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <KeyValueCard
-                title={tr("ai_messages_sent")}
-                value={monthly.ai_messages_sent.toLocaleString()}
-                trend={<TrendIndicator current={monthly.ai_messages_sent} previous={monthly.prev_ai_messages_sent} tr={tr} />}
-              />
-              <EscalationCard
-                title={tr("human_escalations")}
-                count={monthly.human_escalations}
-                total={monthly.ai_conversations_handled}
-                prevCount={monthly.prev_human_escalations}
-                prevTotal={monthly.prev_ai_conversations_handled}
-                tr={tr}
-              />
-            </div>
+                {/* Second row: Messages sent + Escalations */}
+                <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <KeyValueCard
+                    title={tr("ai_messages_sent")}
+                    value={monthly.ai_messages_sent.toLocaleString()}
+                    trend={<TrendIndicator current={monthly.ai_messages_sent} previous={monthly.prev_ai_messages_sent} tr={tr} />}
+                  />
+                  <EscalationCard
+                    title={tr("human_escalations")}
+                    count={monthly.human_escalations}
+                    total={monthly.ai_conversations_handled}
+                    prevCount={monthly.prev_human_escalations}
+                    prevTotal={monthly.prev_ai_conversations_handled}
+                    tr={tr}
+                  />
+                </div>
 
-            {/* Daily volume chart */}
-            <section style={{ ...panel, marginTop: 18 }}>
-              <h2 style={sectionTitle}>{tr("daily_message_volume")}</h2>
-              <DailyVolumeChart days={dailyVolume} />
-            </section>
+                {/* Daily volume chart */}
+                <section style={{ ...panel, marginTop: 18 }}>
+                  <h2 style={sectionTitle}>{tr("daily_message_volume")}</h2>
+                  <DailyVolumeChart days={dailyVolume} />
+                </section>
 
-            {/* Bottom row: Top questions + Usage */}
-            <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
-              <section style={panel}>
-                <h2 style={sectionTitle}>{tr("top_questions")}</h2>
-                {topQuestions.length === 0 ? (
-                  <p style={{ color: "#6B7280", fontSize: 14 }}>{tr("no_data")}</p>
-                ) : (
-                  <ol style={{ margin: 0, paddingLeft: 20 }}>
-                    {topQuestions.map((q, i) => (
-                      <li key={i} style={{ padding: "6px 0", color: "#111827", fontSize: 14, borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-                        <span>{q.question}</span>
-                        <span style={{ float: "right", color: "#6B7280", fontWeight: 700 }}>({q.count})</span>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-              </section>
+                {/* Bottom row: Top questions + Usage */}
+                <div style={{ marginTop: 18, display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 16 }}>
+                  <section style={panel}>
+                    <h2 style={sectionTitle}>{tr("top_questions")}</h2>
+                    {topQuestions.length === 0 ? (
+                      <p style={{ color: "#6B7280", fontSize: 14 }}>{tr("no_data")}</p>
+                    ) : (
+                      <ol style={{ margin: 0, paddingLeft: 20 }}>
+                        {topQuestions.map((q, i) => (
+                          <li key={i} style={{ padding: "6px 0", color: "#111827", fontSize: 14, borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                            <span>{q.question}</span>
+                            <span style={{ float: "right", color: "#6B7280", fontWeight: 700 }}>({q.count})</span>
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </section>
 
-              <section style={panel}>
-                <h2 style={sectionTitle}>{tr("usage_this_month")}</h2>
-                {usage ? (
-                  <div style={{ display: "grid", gap: 14 }}>
-                    <UsageBar used={usage.conversations_used} limit={usage.limit} tr={tr} />
-                    <div style={infoRow}>
-                      <span style={{ color: "#374151", fontWeight: 700 }}>{tr("plan")}</span>
-                      <strong style={{ color: "#111827", textTransform: "capitalize" }}>{usage.plan}</strong>
+                  <section style={panel}>
+                    <h2 style={sectionTitle}>{tr("usage_this_month")}</h2>
+                    {usage ? (
+                      <div style={{ display: "grid", gap: 14 }}>
+                        <UsageBar used={usage.conversations_used} limit={usage.limit} tr={tr} />
+                        <div style={infoRow}>
+                          <span style={{ color: "#374151", fontWeight: 700 }}>{tr("plan")}</span>
+                          <strong style={{ color: "#111827", textTransform: "capitalize" }}>{usage.plan}</strong>
+                        </div>
+                        <div style={infoRow}>
+                          <span style={{ color: "#374151", fontWeight: 700 }}>{tr("resets_in_days").replace("{days}", String(usage.days_until_reset))}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ color: "#6B7280", fontSize: 14 }}>{tr("no_data")}</p>
+                    )}
+                  </section>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Basic analytics: just usage */}
+                <section style={{ ...panel, marginTop: 18 }}>
+                  <h2 style={sectionTitle}>{tr("usage_this_month")}</h2>
+                  {usage ? (
+                    <div style={{ display: "grid", gap: 14 }}>
+                      <UsageBar used={usage.conversations_used} limit={usage.limit} tr={tr} />
+                      <div style={infoRow}>
+                        <span style={{ color: "#374151", fontWeight: 700 }}>{tr("plan")}</span>
+                        <strong style={{ color: "#111827", textTransform: "capitalize" }}>{usage.plan}</strong>
+                      </div>
+                      <div style={infoRow}>
+                        <span style={{ color: "#374151", fontWeight: 700 }}>{tr("resets_in_days").replace("{days}", String(usage.days_until_reset))}</span>
+                      </div>
                     </div>
-                    <div style={infoRow}>
-                      <span style={{ color: "#374151", fontWeight: 700 }}>{tr("resets_in_days").replace("{days}", String(usage.days_until_reset))}</span>
-                    </div>
-                  </div>
-                ) : (
-                  <p style={{ color: "#6B7280", fontSize: 14 }}>{tr("no_data")}</p>
-                )}
-              </section>
-            </div>
+                  ) : (
+                    <p style={{ color: "#6B7280", fontSize: 14 }}>{tr("no_data")}</p>
+                  )}
+                </section>
+                <UpgradePrompt feature="full_analytics" language={language} />
+              </>
+            )}
           </>
         )}
       </div>

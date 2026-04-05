@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { getBackendUrl } from "@/lib/backend-url";
 import DashboardShell from "../_components/DashboardShell";
 
 type KnowledgeRow = {
@@ -22,6 +23,7 @@ export default function KnowledgePage() {
   const [rows, setRows] = useState<KnowledgeRow[]>([]);
   const [newQuestion, setNewQuestion] = useState("");
   const [newAnswer, setNewAnswer] = useState("");
+  const [knowledgeLimit, setKnowledgeLimit] = useState<{ current: number; max: number; limitReached: boolean } | null>(null);
 
   const loadRows = useCallback(async () => {
     const { data: userData } = await supabase.auth.getUser();
@@ -47,14 +49,34 @@ export default function KnowledgePage() {
     setLoading(false);
   }, [router]);
 
+  const loadKnowledgeLimit = useCallback(async () => {
+    const { data: session } = await supabase.auth.getSession();
+    const token = session.session?.access_token;
+    if (!token) return;
+    try {
+      const res = await fetch(`${getBackendUrl()}/api/knowledge/limit`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setKnowledgeLimit(await res.json());
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     void loadRows();
-  }, [loadRows]);
+    void loadKnowledgeLimit();
+  }, [loadRows, loadKnowledgeLimit]);
 
   async function addManualEntry() {
     const question = newQuestion.trim();
     const answer = newAnswer.trim();
     if (!question || !answer) return;
+
+    // Check knowledge limit before adding
+    if (knowledgeLimit?.limitReached) return;
 
     setSavingId("new");
     try {
@@ -80,6 +102,7 @@ export default function KnowledgePage() {
       setNewQuestion("");
       setNewAnswer("");
       await loadRows();
+      await loadKnowledgeLimit();
     } catch (e) {
       console.error(e);
     } finally {
@@ -118,6 +141,7 @@ export default function KnowledgePage() {
       const { error } = await supabase.from("knowledge_base").delete().eq("id", id);
       if (error) throw error;
       await loadRows();
+      await loadKnowledgeLimit();
     } catch (e) {
       console.error(e);
     } finally {
@@ -130,12 +154,30 @@ export default function KnowledgePage() {
       <div style={{ maxWidth: 980 }}>
       <div style={{ marginTop: 16, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 12, background: "white" }}>
         <h2 style={{ marginTop: 0, fontSize: 18 }}>Add manual knowledge</h2>
+
+        {knowledgeLimit && knowledgeLimit.max > 0 && (
+          <div style={{
+            marginBottom: 10,
+            padding: "8px 12px",
+            borderRadius: 8,
+            background: knowledgeLimit.limitReached ? "#fef2f2" : "#f0fdf4",
+            border: `1px solid ${knowledgeLimit.limitReached ? "#fecaca" : "#bbf7d0"}`,
+            fontSize: 13,
+            fontWeight: 600,
+            color: knowledgeLimit.limitReached ? "#dc2626" : "#166534",
+          }}>
+            {knowledgeLimit.current} / {knowledgeLimit.max} items used
+            {knowledgeLimit.limitReached && " — limit reached. Upgrade your plan for more."}
+          </div>
+        )}
+
         <div style={{ display: "grid", gap: 10 }}>
           <input
             value={newQuestion}
             onChange={(e) => setNewQuestion(e.target.value)}
             placeholder="Question"
             style={field}
+            disabled={!!knowledgeLimit?.limitReached}
           />
           <textarea
             value={newAnswer}
@@ -143,8 +185,17 @@ export default function KnowledgePage() {
             placeholder="Answer"
             rows={3}
             style={field}
+            disabled={!!knowledgeLimit?.limitReached}
           />
-          <button onClick={addManualEntry} disabled={savingId === "new"} style={actionBtn}>
+          <button
+            onClick={addManualEntry}
+            disabled={savingId === "new" || !!knowledgeLimit?.limitReached}
+            style={{
+              ...actionBtn,
+              opacity: knowledgeLimit?.limitReached ? 0.5 : 1,
+              cursor: knowledgeLimit?.limitReached ? "not-allowed" : "pointer",
+            }}
+          >
             {savingId === "new" ? "Saving..." : "Add entry"}
           </button>
         </div>

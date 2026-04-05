@@ -243,6 +243,18 @@ const english: Dictionary = {
   calendar_upgrade_notice: "Upgrade to Pro for automatic Google Calendar sync",
   calendar_google_error: "Failed to connect Google Calendar",
   calendar_loading: "Loading calendar settings...",
+  // Upgrade prompts
+  upgrade_to: "Upgrade to",
+  upgrade_available_on: "is available on",
+  upgrade_full_analytics: "Full analytics with charts and trends",
+  upgrade_monthly_reports: "Monthly performance reports",
+  upgrade_escalation_insights: "Escalation insights and recommendations",
+  upgrade_google_calendar: "Google Calendar automatic sync",
+  upgrade_ai_tone: "AI tone and personality customization",
+  upgrade_instagram: "Instagram DM support",
+  upgrade_team_access: "Team access for staff members",
+  upgrade_required: "This feature requires an upgrade.",
+  upgrade_knowledge_limit: "Knowledge base limit reached ({current}/{max}). Upgrade your plan for more.",
 };
 
 const swedish: Dictionary = {
@@ -485,6 +497,18 @@ const swedish: Dictionary = {
   calendar_upgrade_notice: "Uppgradera till Pro för automatisk Google Kalender-synk",
   calendar_google_error: "Kunde inte ansluta Google Kalender",
   calendar_loading: "Laddar kalenderinställningar...",
+  // Upgrade prompts
+  upgrade_to: "Uppgradera till",
+  upgrade_available_on: "finns tillgänglig på",
+  upgrade_full_analytics: "Fullständig analys med diagram och trender",
+  upgrade_monthly_reports: "Månatliga prestandarapporter",
+  upgrade_escalation_insights: "Eskaleringsinsikter och rekommendationer",
+  upgrade_google_calendar: "Automatisk Google Kalender-synk",
+  upgrade_ai_tone: "AI-ton och personlighetsanpassning",
+  upgrade_instagram: "Instagram DM-stöd",
+  upgrade_team_access: "Teamåtkomst för personal",
+  upgrade_required: "Den här funktionen kräver en uppgradering.",
+  upgrade_knowledge_limit: "Kunskapsbas-gräns nådd ({current}/{max}). Uppgradera din plan för mer.",
 };
 
 const arabic: Dictionary = {
@@ -719,6 +743,18 @@ const arabic: Dictionary = {
   calendar_upgrade_notice: "قم بالترقية إلى Pro للمزامنة التلقائية مع تقويم Google",
   calendar_google_error: "فشل الاتصال بتقويم Google",
   calendar_loading: "جاري تحميل إعدادات التقويم...",
+  // Upgrade prompts
+  upgrade_to: "الترقية إلى",
+  upgrade_available_on: "متاح على",
+  upgrade_full_analytics: "تحليلات كاملة مع الرسوم البيانية والاتجاهات",
+  upgrade_monthly_reports: "تقارير الأداء الشهرية",
+  upgrade_escalation_insights: "رؤى التصعيد والتوصيات",
+  upgrade_google_calendar: "مزامنة تقويم Google التلقائية",
+  upgrade_ai_tone: "تخصيص نبرة وشخصية الذكاء الاصطناعي",
+  upgrade_instagram: "دعم رسائل Instagram المباشرة",
+  upgrade_team_access: "وصول الفريق للموظفين",
+  upgrade_required: "هذه الميزة تتطلب ترقية.",
+  upgrade_knowledge_limit: "تم الوصول إلى حد قاعدة المعرفة ({current}/{max}). قم بترقية خطتك للمزيد.",
 };
 
 export const translations: Record<DashboardLanguage, Dictionary> = {

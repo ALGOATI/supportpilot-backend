@@ -5,6 +5,8 @@ import { supabase } from "@/lib/supabase";
 import DashboardShell from "../_components/DashboardShell";
 import { DashboardLanguage, t } from "@/lib/i18n";
 import { getBackendUrl } from "@/lib/backend-url";
+import { usePlanFeatures } from "@/lib/usePlanFeatures";
+import UpgradePrompt from "../_components/UpgradePrompt";
 
 type Tone = "professional" | "friendly" | "casual";
 type ReplyLength = "concise" | "normal" | "detailed";
@@ -57,6 +59,8 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [releaseStatus, setReleaseStatus] = useState<ReleaseStatusResponse | null>(null);
   const [releaseError, setReleaseError] = useState<string | null>(null);
+
+  const { features } = usePlanFeatures();
 
   const [business, setBusiness] = useState("");
   const [tone, setTone] = useState<Tone>("professional");
@@ -802,20 +806,25 @@ export default function SettingsPage() {
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontWeight: 800 }}>{t(dashboardLanguage, "tone")}</span>
               <select
-                value={tone}
+                value={features.ai_tone_customization ? tone : "professional"}
                 onChange={(e) => setTone(e.target.value as Tone)}
+                disabled={!features.ai_tone_customization}
                 style={{
                   padding: 10,
                   borderRadius: 10,
                   border: "1px solid rgba(0,0,0,0.15)",
-                  background: "white",
-                  color: "#111827",
+                  background: features.ai_tone_customization ? "white" : "#f1f5f9",
+                  color: features.ai_tone_customization ? "#111827" : "#94a3b8",
+                  cursor: features.ai_tone_customization ? "pointer" : "not-allowed",
                 }}
               >
                 <option value="professional">Professional</option>
                 <option value="friendly">Friendly</option>
                 <option value="casual">Casual</option>
               </select>
+              {!features.ai_tone_customization && (
+                <UpgradePrompt feature="ai_tone_customization" language={dashboardLanguage} />
+              )}
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>

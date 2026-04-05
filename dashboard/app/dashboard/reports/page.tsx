@@ -5,6 +5,8 @@ import { supabase } from "@/lib/supabase";
 import DashboardShell from "../_components/DashboardShell";
 import { getBackendUrl } from "@/lib/backend-url";
 import { useDashboardLanguage } from "@/lib/useDashboardLanguage";
+import { usePlanFeatures } from "@/lib/usePlanFeatures";
+import UpgradePrompt from "../_components/UpgradePrompt";
 
 type TopQuestion = { question: string; count: number };
 type EscalationReason = { reason: string; count: number };
@@ -54,7 +56,8 @@ function formatResponseTime(ms: number) {
 
 export default function ReportsPage() {
   const router = useRouter();
-  const { tr } = useDashboardLanguage();
+  const { tr, language } = useDashboardLanguage();
+  const { features, loading: planLoading } = usePlanFeatures();
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<MonthlyReport | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -103,6 +106,16 @@ export default function ReportsPage() {
   }, [token, selectedMonth]);
 
   const monthLabel = monthOptions.find(o => o.value === selectedMonth)?.label || selectedMonth;
+
+  if (!planLoading && !features.monthly_reports) {
+    return (
+      <DashboardShell title={tr("reports")} subtitle={tr("reports_subtitle")}>
+        <div style={{ maxWidth: 780, marginTop: 16 }}>
+          <UpgradePrompt feature="monthly_reports" language={language} />
+        </div>
+      </DashboardShell>
+    );
+  }
 
   return (
     <DashboardShell title={tr("reports")} subtitle={tr("reports_subtitle")}>

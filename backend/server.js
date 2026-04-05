@@ -3006,7 +3006,11 @@ const dotenvResult = dotenv.config({ path: envPath });
 
     const fallbackBusiness = settings?.business || "No business info provided.";
     const plan = settings?.plan || "starter";
-    const tone = settings?.tone || "professional";
+    const planConfig = getPlanDefaults(plan);
+    // Enforce tone gating: non-Pro/Business users always get "professional"
+    const tone = planConfig.features?.ai_tone_customization
+      ? (settings?.tone || "professional")
+      : "professional";
     const replyLength = settings?.reply_length || "concise";
     const { data: businessRow } = await supabaseAdmin
       .from("businesses")
@@ -4806,6 +4810,56 @@ ${business}
       (a, b) => +new Date(b.last_message_at) - +new Date(a.last_message_at)
     );
   }
+
+  /* ================================
+    PLAN FEATURES ENDPOINT + KNOWLEDGE LIMIT CHECK
+  ================================ */
+  app.get("/api/knowledge/limit", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const plan = await loadUserPlan(userId);
+      const planConfig = getPlanDefaults(plan);
+      const maxKnowledge = planConfig.max_knowledge;
+
+      const { count, error } = await supabaseAdmin
+        .from("knowledge_base")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId);
+
+      if (error) {
+        return res.status(500).json({ error: error.message });
+      }
+
+      const current = count || 0;
+      const limitReached = maxKnowledge > 0 && current >= maxKnowledge;
+
+      return res.json({ current, max: maxKnowledge, limitReached });
+    } catch (err) {
+      console.error("Knowledge limit error:", err?.message || err);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
+
+  app.get("/api/plan/features", requireSupabaseUser, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const plan = await loadUserPlan(userId);
+      const planConfig = getPlanDefaults(plan);
+
+      return res.json({
+        tier: plan,
+        features: planConfig.features || {},
+        limits: {
+          maxMessages: planConfig.max_messages,
+          maxKnowledge: planConfig.max_knowledge,
+          maxWhatsappNumbers: planConfig.max_whatsapp_numbers,
+        },
+      });
+    } catch (err) {
+      console.error("Plan features error:", err?.message || err);
+      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
+    }
+  });
 
   /* ================================
     SECURE AI REPLY ROUTE
@@ -6641,6 +6695,17 @@ Rules:
   app.get("/api/analytics/monthly-report", requireSupabaseUser, async (req, res) => {
     try {
       const userId = req.user.id;
+
+      // Gate: monthly reports require Pro or Business
+      const plan = await loadUserPlan(userId);
+      const planConfig = getPlanDefaults(plan);
+      if (!planConfig.features?.monthly_reports) {
+        return res.status(403).json({
+          error: "Monthly reports are available on Pro and Business plans.",
+          upgrade_required: true,
+        });
+      }
+
       const monthParam = String(req.query.month || "").trim();
       const monthKey = /^\d{4}-\d{2}$/.test(monthParam) ? monthParam : monthlyStatsService.getMonthKey();
 
