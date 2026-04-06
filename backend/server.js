@@ -435,21 +435,29 @@ const dotenvResult = dotenv.config({ path: envPath });
   }
 
   async function loadUserPlan(userId) {
+    // Primary source: businesses table (set by Wix payment webhook)
     const { data, error } = await supabaseAdmin
       .from("businesses")
       .select("plan")
       .eq("id", userId)
       .maybeSingle();
 
-    if (error) {
-      const errText = String(error.message || "").toLowerCase();
-      if (errText.includes("plan") || errText.includes(SCHEMA_CACHE_TEXT) || errText.includes(DOES_NOT_EXIST_TEXT)) {
-        return "starter";
-      }
-      throw new Error(error.message);
+    if (!error && data?.plan) {
+      return data.plan;
     }
 
-    return data?.plan || "starter";
+    // Fallback: client_settings.plan (used when businesses table is unavailable)
+    const { data: settings } = await supabaseAdmin
+      .from("client_settings")
+      .select("plan")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (settings?.plan) {
+      return settings.plan;
+    }
+
+    return "starter";
   }
 
   async function loadBusinessMaxMessages(userId) {
@@ -7088,13 +7096,34 @@ Rules:
         return res.status(400).json({ error: "Email is required" });
       }
 
-      const { data: business } = await supabaseAdmin
+      // Try businesses table first (set by Wix payment webhook). When that
+      // table is unavailable, fall back to scanning Supabase auth users.
+      const { data: business, error: bizErr } = await supabaseAdmin
         .from("businesses")
         .select("id")
-        .eq("owner_email", email)
+        .eq("email", email)
         .maybeSingle();
 
-      return res.json({ exists: !!business });
+      if (!bizErr && business) {
+        return res.json({ exists: true });
+      }
+
+      // Fallback: paginate auth users (sufficient for early-stage user counts)
+      let page = 1;
+      const perPage = 200;
+      while (page <= 25) {
+        const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+          page,
+          perPage,
+        });
+        if (error) break;
+        const found = data?.users?.some((u) => (u.email || "").toLowerCase() === email);
+        if (found) return res.json({ exists: true });
+        if (!data?.users || data.users.length < perPage) break;
+        page += 1;
+      }
+
+      return res.json({ exists: false });
     } catch (err) {
       console.error("Check email error:", err?.message || err);
       return res.status(500).json({ error: "Internal error" });

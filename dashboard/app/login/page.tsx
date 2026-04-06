@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { getBackendUrl } from "@/lib/backend-url";
 import { DashboardLanguage, t, isRtlLanguage } from "@/lib/i18n";
@@ -15,14 +16,27 @@ function maskEmail(e: string) {
 }
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [language, setLanguage] = useState<DashboardLanguage>("english");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailSent, setEmailSent] = useState(false);
   const [sentTo, setSentTo] = useState("");
   const [cooldown, setCooldown] = useState(0);
+  const [showPasswordLogin, setShowPasswordLogin] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    // Show developer password login if ?dev=1 query param is set
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("dev") === "1") {
+        setShowPasswordLogin(true);
+      }
+    }
+  }, []);
 
   const tr = (key: string) => t(language, key);
   const isRtl = isRtlLanguage(language);
@@ -94,6 +108,45 @@ export default function LoginPage() {
     } catch {
       setError("Unable to verify email. Please try again.");
       setLoading(false);
+    }
+  }
+
+  async function handlePasswordLogin() {
+    if (!email.trim() || !password) return;
+    setLoading(true);
+    setError(null);
+
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (signInError) {
+      setError(signInError.message);
+      setLoading(false);
+      return;
+    }
+
+    // Redirect based on setup status
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        router.push("/dashboard");
+        return;
+      }
+
+      const res = await fetch(`${getBackendUrl()}/api/setup/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const status = await res.json();
+        router.push(status?.completed ? "/dashboard" : "/setup");
+      } else {
+        router.push("/dashboard");
+      }
+    } catch {
+      router.push("/dashboard");
     }
   }
 
@@ -263,6 +316,35 @@ export default function LoginPage() {
             {loading ? tr("sending") : tr("login_magic_link_button")}
           </button>
         </div>
+
+        {showPasswordLogin && (
+          <div style={{ marginTop: 24, borderTop: "1px solid #e2e8f0", paddingTop: 16 }}>
+            <p style={{ fontSize: 13, color: "#94a3b8", marginBottom: 8, fontWeight: 600 }}>
+              Developer login
+            </p>
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handlePasswordLogin()}
+              style={styles.input}
+            />
+            <button
+              onClick={handlePasswordLogin}
+              disabled={loading || !email.trim() || !password}
+              style={{
+                ...styles.primaryBtn,
+                marginTop: 8,
+                background: "#475569",
+                opacity: loading || !email.trim() || !password ? 0.6 : 1,
+                cursor: loading || !email.trim() || !password ? "not-allowed" : "pointer",
+              }}
+            >
+              {loading ? "Logging in..." : "Developer login"}
+            </button>
+          </div>
+        )}
       </div>
 
       <p style={styles.footer}>SupportPilot</p>
