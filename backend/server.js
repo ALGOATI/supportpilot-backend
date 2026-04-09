@@ -33,7 +33,25 @@ const dotenvResult = dotenv.config({ path: envPath });
   import { createClient } from "@supabase/supabase-js";
   import crypto from "node:crypto";
 
+  /* ================================
+    REQUIRED ENV VARS
+    Fail fast on startup so Render shows a clear "service failed to start"
+    instead of every request mysteriously returning 500 later.
+  ================================ */
+  const REQUIRED_ENV_VARS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
+  const missingEnvVars = REQUIRED_ENV_VARS.filter((name) => !process.env[name]);
+  if (missingEnvVars.length > 0) {
+    console.error(
+      `❌ Missing required environment variables: ${missingEnvVars.join(", ")}`
+    );
+    console.error("   Set them in Render (or backend/.env locally) and restart.");
+    process.exit(1);
+  }
+
   const app = express();
+  // Render terminates TLS at a proxy, so trust the first hop. Required for
+  // express-rate-limit to read X-Forwarded-For correctly and for req.protocol.
+  app.set("trust proxy", 1);
   const PORT = process.env.PORT || 3001;
   const JOB_WORKER_POLL_MS = Number(process.env.JOB_WORKER_POLL_MS || 500);
   let isJobWorkerRunning = false;
@@ -81,10 +99,14 @@ const dotenvResult = dotenv.config({ path: envPath });
         if (!origin) return callback(null, true);
 
         if (allowedOrigins.length === 0) {
-          // No origins configured — reject in production, allow in development
+          // No origins configured — reject in production, allow in development.
+          // IMPORTANT: never pass an Error to the callback, or `cors` will call
+          // next(err) and (without an error handler) Express returns 500 even
+          // for OPTIONS preflight. Return `false` instead — the browser then
+          // blocks the response cleanly with a normal CORS error.
           if (process.env.NODE_ENV === "production") {
             console.warn(`⚠️ CORS: Blocked request from ${origin} — ALLOWED_ORIGINS not configured`);
-            return callback(new Error("CORS not configured"), false);
+            return callback(null, false);
           }
           return callback(null, true);
         }
@@ -94,7 +116,7 @@ const dotenvResult = dotenv.config({ path: envPath });
         }
 
         console.warn(`⚠️ CORS: Blocked request from ${origin}`);
-        return callback(new Error("Not allowed by CORS"), false);
+        return callback(null, false);
       },
       credentials: true,
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -7263,6 +7285,18 @@ Rules:
       console.error("Knowledge learn endpoint failed:", err?.message || err);
       return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
     }
+  });
+
+  /* ================================
+    GLOBAL ERROR HANDLER
+    Must be registered after all routes. Catches any thrown error or
+    next(err) call and returns JSON instead of Express's default HTML 500.
+  ================================ */
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, _req, res, _next) => {
+    console.error("Unhandled error:", err?.stack || err?.message || err);
+    if (res.headersSent) return;
+    res.status(500).json({ error: SERVER_ERROR_MESSAGE });
   });
 
   /* ================================
