@@ -26,6 +26,9 @@ import {
   import { publicRateLimit, widgetRateLimit } from "./middleware/rateLimiter.js";
   import { errorHandler } from "./middleware/errorHandler.js";
   import { createAuthMiddleware } from "./middleware/auth.js";
+  import { createPlanService } from "./services/planService.js";
+  import { createEscalationService } from "./services/escalationService.js";
+  import { createDemoService } from "./services/demoService.js";
   import {
     SERVER_ERROR_MESSAGE,
     SCHEMA_CACHE_TEXT,
@@ -39,6 +42,7 @@ import {
     CONVERSATION_DETAIL_SELECT_FIELDS,
     MENU_EXTRACTION_ERROR_MESSAGE,
     CONVERSATION_NOT_FOUND_MESSAGE,
+    ESCALATION_REPLY_MESSAGE,
   } from "./config/constants.js";
 
   const __filename = fileURLToPath(import.meta.url);
@@ -143,32 +147,6 @@ import {
     return Boolean(apiKey) && hasModel;
   }
 
-  function countMessageChars(text) {
-    return Array.from(String(text || "")).length;
-  }
-
-  function getMessageLimitForPlan(plan) {
-    return getPlanLimits(plan).maxMessageChars;
-  }
-
-  function getMessageLengthValidation({ text, plan }) {
-    const maxMessageChars = getMessageLimitForPlan(plan);
-    const messageLength = countMessageChars(text);
-    return {
-      maxMessageChars,
-      messageLength,
-      isTooLong: messageLength > maxMessageChars,
-    };
-  }
-
-  function buildMessageTooLongPayload(maxMessageChars) {
-    return {
-      error: "Please shorten your message.",
-      code: "message_too_long",
-      maxMessageChars,
-    };
-  }
-
   function sanitizeExternalIdentifier(value, fallbackPrefix = "id") {
     const raw = String(value || "")
       .trim()
@@ -178,232 +156,40 @@ import {
     return `${fallbackPrefix}:${crypto.randomUUID()}`;
   }
 
-  function getMonthStartIso(date = new Date()) {
-    const d = new Date(date);
-    d.setUTCDate(1);
-    d.setUTCHours(0, 0, 0, 0);
-    return d.toISOString();
-  }
-
-  function getUsageMonthKey(date = new Date()) {
-    const d = new Date(date);
-    if (Number.isNaN(d.getTime())) {
-      return getUsageMonthKey(new Date());
-    }
-    const year = d.getUTCFullYear();
-    const month = String(d.getUTCMonth() + 1).padStart(2, "0");
-    return `${year}-${month}`;
-  }
-
-  function getUsageMonthKeyFromMonthStartIso(monthStartIso) {
-    if (!monthStartIso) return getUsageMonthKey(new Date());
-    const parsed = new Date(monthStartIso);
-    if (Number.isNaN(parsed.getTime())) return getUsageMonthKey(new Date());
-    return getUsageMonthKey(parsed);
-  }
-
-  function isMissingClientUsageSchemaError(error) {
-    const text = String(error?.message || "").toLowerCase();
-    return (
-      text.includes("client_usage") ||
-      text.includes("increment_client_usage") ||
-      text.includes(SCHEMA_CACHE_TEXT) ||
-      text.includes(DOES_NOT_EXIST_TEXT)
-    );
-  }
-
-  function isDuplicateKeyError(error) {
-    if (String(error?.code || "").trim() === "23505") return true;
-    const text = String(error?.message || "").toLowerCase();
-    return text.includes("duplicate key") || text.includes("unique");
-  }
-
-  async function countMonthlyAiConversationsFromMessages(
-    userId,
-    monthStartIso = getMonthStartIso()
-  ) {
-    const buildMonthlyMessagesQuery = (columns) =>
-      supabaseAdmin
-        .from("messages")
-        .select(columns)
-        .eq("user_id", userId)
-        .gte("created_at", monthStartIso)
-        .not("ai_reply", "is", null)
-        .neq("ai_reply", "");
-
-    let rows = [];
-    const withModel = await buildMonthlyMessagesQuery("conversation_id,model_used")
-      .limit(10000);
-    if (withModel.error) {
-      const errText = String(withModel.error.message || "").toLowerCase();
-      const canFallback =
-        errText.includes("model_used") ||
-        errText.includes(SCHEMA_CACHE_TEXT) ||
-        errText.includes(DOES_NOT_EXIST_TEXT);
-
-      if (!canFallback) {
-        throw new Error(withModel.error.message);
-      }
-
-      const fallback = await buildMonthlyMessagesQuery("conversation_id").limit(10000);
-      if (fallback.error) throw new Error(fallback.error.message);
-      rows = (fallback.data || []).map((row) => ({ ...row, model_used: null }));
-    } else {
-      rows = withModel.data || [];
-    }
-
-    const set = new Set();
-    for (const row of rows || []) {
-      const conversationId = String(row?.conversation_id || "").trim();
-      if (!conversationId) continue;
-      set.add(conversationId);
-    }
-    return set.size;
-  }
-
-  async function getMonthlyUsageSnapshot({
-    userId,
-    monthKey = getUsageMonthKey(new Date()),
-    fallbackMonthStartIso = getMonthStartIso(new Date()),
-  }) {
-    const usageRow = await supabaseAdmin
-      .from("client_usage")
-      .select("conversations_used")
-      .eq("client_id", userId)
-      .eq("month", monthKey)
-      .maybeSingle();
-
-    if (!usageRow.error) {
-      return Number(usageRow.data?.conversations_used || 0);
-    }
-
-    if (!isMissingClientUsageSchemaError(usageRow.error)) {
-      throw new Error(usageRow.error.message);
-    }
-
-    return countMonthlyAiConversationsFromMessages(userId, fallbackMonthStartIso);
-  }
-  // eslint-disable-next-line sonarjs/cognitive-complexity
-  async function reserveConversationUsageAndIncrement({
-    userId,
-    conversationId,
-    monthKey = getUsageMonthKey(new Date()),
-  }) {
-    if (!userId || !conversationId) return null;
-
-    const dedupeInsert = await supabaseAdmin
-      .from("client_usage_conversations")
-      .insert({
-        client_id: userId,
-        month: monthKey,
-        conversation_id: conversationId,
-      });
-
-    if (dedupeInsert.error) {
-      if (isDuplicateKeyError(dedupeInsert.error)) {
-        return getMonthlyUsageSnapshot({
-          userId,
-          monthKey,
-          fallbackMonthStartIso: getMonthStartIso(new Date(`${monthKey}-01T00:00:00.000Z`)),
-        });
-      }
-
-      if (!isMissingClientUsageSchemaError(dedupeInsert.error)) {
-        throw new Error(dedupeInsert.error.message);
-      }
-
-      return null;
-    }
-
-    const incrementResp = await supabaseAdmin.rpc("increment_client_usage", {
-      p_client_id: userId,
-      p_month: monthKey,
-      p_delta: 1,
-    });
-
-    if (!incrementResp.error) {
-      const value = Number(incrementResp.data);
-      return Number.isFinite(value) ? value : null;
-    }
-
-    if (!isMissingClientUsageSchemaError(incrementResp.error)) {
-      throw new Error(incrementResp.error.message);
-    }
-
-    const existingUsage = await supabaseAdmin
-      .from("client_usage")
-      .select("id,conversations_used")
-      .eq("client_id", userId)
-      .eq("month", monthKey)
-      .maybeSingle();
-
-    if (existingUsage.error && !isMissingClientUsageSchemaError(existingUsage.error)) {
-      throw new Error(existingUsage.error.message);
-    }
-
-    if (existingUsage.data?.id) {
-      const nextCount = Number(existingUsage.data.conversations_used || 0) + 1;
-      const updateResp = await supabaseAdmin
-        .from("client_usage")
-        .update({ conversations_used: nextCount })
-        .eq("id", existingUsage.data.id)
-        .eq("client_id", userId);
-      if (updateResp.error && !isMissingClientUsageSchemaError(updateResp.error)) {
-        throw new Error(updateResp.error.message);
-      }
-      return nextCount;
-    }
-
-    const insertResp = await supabaseAdmin.from("client_usage").insert({
-      client_id: userId,
-      month: monthKey,
-      conversations_used: 1,
-    });
-    if (insertResp.error && !isMissingClientUsageSchemaError(insertResp.error)) {
-      throw new Error(insertResp.error.message);
-    }
-    return 1;
-  }
-
-  async function countMonthlyAiConversations(userId, monthStartIso = getMonthStartIso()) {
-    const monthKey = getUsageMonthKeyFromMonthStartIso(monthStartIso);
-    return getMonthlyUsageSnapshot({
-      userId,
-      monthKey,
-      fallbackMonthStartIso: monthStartIso,
-    });
-  }
-
-  async function loadUserPlan(userId) {
-    const { data, error } = await supabaseAdmin
-      .from("client_settings")
-      .select("plan")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (!error && data?.plan) return data.plan;
-    return "starter";
-  }
-
-  async function loadBusinessMaxMessages(userId) {
-    const { data, error } = await supabaseAdmin
-      .from("businesses")
-      .select("max_messages")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (error) {
-      const errText = String(error.message || "").toLowerCase();
-      if (errText.includes(SCHEMA_CACHE_TEXT) || errText.includes(DOES_NOT_EXIST_TEXT)) {
-        return null;
-      }
-      throw new Error(error.message);
-    }
-
-    return data?.max_messages ?? null;
-  }
-
   const { verifyWidgetClient, requireSupabaseUser } = createAuthMiddleware({ supabaseAdmin });
+
+  const planService = createPlanService({ supabaseAdmin });
+  const {
+    getMessageLimitForPlan,
+    getMessageLengthValidation,
+    buildMessageTooLongPayload,
+    getMonthStartIso,
+    getUsageMonthKey,
+    reserveConversationUsageAndIncrement,
+    countMonthlyAiConversations,
+    loadUserPlan,
+    loadBusinessMaxMessages,
+  } = planService;
+
+  const escalationService = createEscalationService({ supabaseAdmin });
+  const {
+    findUserByEmail,
+    buildEscalationNotificationPreview,
+    sendEscalationEmailNotification,
+    createEscalationNotification,
+  } = escalationService;
+
+  // demoService depends on a few helpers that are still defined later in this
+  // file (loadBusinessTimezone, getTodayIsoDateInTimezone, insertMessageWithFallback).
+  // Those are async/function declarations, so they're hoisted; we wrap them in
+  // arrow shims so the factory captures stable references that resolve at call time.
+  const demoService = createDemoService({
+    supabaseAdmin,
+    getTodayIsoDateInTimezone: (...args) => getTodayIsoDateInTimezone(...args),
+    loadBusinessTimezone: (...args) => loadBusinessTimezone(...args),
+    insertMessageWithFallback: (...args) => insertMessageWithFallback(...args),
+  });
+  const { setUserDemoModeFlag, generateDemoConversations } = demoService;
 
   function normalizeSetupHoursRows(rows) {
     const safeRows = Array.isArray(rows) ? rows : [];
@@ -462,400 +248,6 @@ import {
     return normalized.slice(0, 300);
   }
 
-  async function setUserDemoModeFlag({ userId, enabled }) {
-    try {
-      const { error } = await supabaseAdmin
-        .from("client_settings")
-        .upsert(
-          {
-            user_id: userId,
-            demo_mode: Boolean(enabled),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" }
-        );
-
-      if (!error) return;
-
-      const errText = String(error.message || "").toLowerCase();
-      if (errText.includes("demo_mode")) return;
-      throw new Error(error.message);
-    } catch (err) {
-      const message = String(err?.message || "").toLowerCase();
-      if (message.includes("demo_mode") || message.includes(SCHEMA_CACHE_TEXT)) return;
-      throw err;
-    }
-  }
-
-  function demoScenariosForDate(todayIso) {
-    return [
-      {
-        title: "Vegan menu question",
-        intent: "faq",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "idle",
-        thread: [
-          {
-            customer: "Hello, do you have vegan food?",
-            ai: "Yes, we do. We have vegan pasta, grilled vegetables, and a vegan burger. Would you like the full menu highlights?",
-            extractedData: { intent: "faq", status: "incomplete", missing: [] },
-            escalated: false,
-          },
-        ],
-      },
-      {
-        title: "Booking for Friday",
-        intent: "booking",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "booking_confirmed",
-        thread: [
-          {
-            customer: "I want to book a table for 4 on Friday",
-            ai: "Great, I can help with that. What time on Friday would you like the table?",
-            extractedData: {
-              intent: "booking",
-              date: todayIso,
-              time: null,
-              people: "4",
-              name: null,
-              phone: null,
-              status: "incomplete",
-              missing: ["time", "name", "phone"],
-            },
-            escalated: false,
-          },
-          {
-            customer: "19:00, name is Sara and phone is 0701234567",
-            ai: "Perfect, you are booked for 4 guests on Friday at 19:00 under Sara (0701234567). See you then.",
-            extractedData: {
-              intent: "booking",
-              date: todayIso,
-              time: "19:00",
-              people: "4",
-              name: "Sara",
-              phone: "0701234567",
-              status: "complete",
-              missing: [],
-            },
-            escalated: false,
-          },
-        ],
-      },
-      {
-        title: "Opening hours",
-        intent: "faq",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "idle",
-        thread: [
-          {
-            customer: "What time do you close?",
-            ai: "We close at 22:00 on weekdays and 23:00 on Friday and Saturday.",
-            extractedData: { intent: "faq", status: "incomplete", missing: [] },
-            escalated: false,
-          },
-        ],
-      },
-      {
-        title: "Address inquiry",
-        intent: "faq",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "idle",
-        thread: [
-          {
-            customer: "Where are you located?",
-            ai: "We are at Storgatan 12, Stockholm. If you want, I can also share nearby parking info.",
-            extractedData: { intent: "faq", status: "incomplete", missing: [] },
-            escalated: false,
-          },
-        ],
-      },
-      {
-        title: "Refund request",
-        intent: "complaint",
-        status: "escalated",
-        priority: "high",
-        state: "human_mode",
-        thread: [
-          {
-            customer: "I want a refund",
-            ai: ESCALATION_REPLY_MESSAGE,
-            extractedData: {
-              intent: "other",
-              confidence: "low",
-              escalation_reason: "refund",
-              status: "incomplete",
-              missing: [],
-            },
-            escalated: true,
-          },
-        ],
-      },
-      {
-        title: "Menu and pricing",
-        intent: "faq",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "idle",
-        thread: [
-          {
-            customer: "Can I see your menu prices?",
-            ai: "Of course. Main dishes range from 120 to 210 SEK, and lunch specials start at 99 SEK.",
-            extractedData: { intent: "faq", status: "incomplete", missing: [] },
-            escalated: false,
-          },
-        ],
-      },
-      {
-        title: "Allergy question",
-        intent: "complaint",
-        status: "escalated",
-        priority: "high",
-        state: "human_mode",
-        thread: [
-          {
-            customer: "I have a severe nut allergy, can you guarantee no cross contamination?",
-            ai: ESCALATION_REPLY_MESSAGE,
-            extractedData: {
-              intent: "other",
-              confidence: "low",
-              escalation_reason: "allergy",
-              status: "incomplete",
-              missing: [],
-            },
-            escalated: true,
-          },
-        ],
-      },
-      {
-        title: "Large party booking",
-        intent: "booking",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "booking_collecting",
-        thread: [
-          {
-            customer: "Can I reserve for 10 people tomorrow?",
-            ai: "Yes, we can check that. Please share your preferred time, name, and phone number.",
-            extractedData: {
-              intent: "booking",
-              date: todayIso,
-              time: null,
-              people: "10",
-              name: null,
-              phone: null,
-              status: "incomplete",
-              missing: ["time", "name", "phone"],
-            },
-            escalated: false,
-          },
-        ],
-      },
-      {
-        title: "Complaint follow-up",
-        intent: "complaint",
-        status: "escalated",
-        priority: "high",
-        state: "human_mode",
-        thread: [
-          {
-            customer: "Your staff was rude yesterday and I want to speak to the manager",
-            ai: ESCALATION_REPLY_MESSAGE,
-            extractedData: {
-              intent: "other",
-              confidence: "low",
-              escalation_reason: "complaint",
-              status: "incomplete",
-              missing: [],
-            },
-            escalated: true,
-          },
-        ],
-      },
-      {
-        title: "Takeaway options",
-        intent: "faq",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "idle",
-        thread: [
-          {
-            customer: "Do you do takeaway and delivery?",
-            ai: "Yes, we offer takeaway all day and delivery between 12:00 and 21:30.",
-            extractedData: { intent: "faq", status: "incomplete", missing: [] },
-            escalated: false,
-          },
-        ],
-      },
-      {
-        title: "Booking change request",
-        intent: "booking",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "booking_collecting",
-        thread: [
-          {
-            customer: "I need to change my booking from 4 people to 6",
-            ai: "No problem, I updated it to 6 guests. Please confirm the date and time so I can finalize it.",
-            extractedData: {
-              intent: "booking",
-              date: null,
-              time: null,
-              people: "6",
-              name: null,
-              phone: null,
-              status: "incomplete",
-              missing: ["date", "time", "name", "phone"],
-            },
-            escalated: false,
-          },
-        ],
-      },
-      {
-        title: "Language switch request",
-        intent: "faq",
-        status: "waiting_customer",
-        priority: "normal",
-        state: "idle",
-        thread: [
-          {
-            customer: "Kan du svara på svenska?",
-            ai: "Absolut, jag kan svara på svenska. Hur kan jag hjälpa dig?",
-            extractedData: { intent: "faq", status: "incomplete", missing: [] },
-            escalated: false,
-          },
-        ],
-      },
-    ];
-  }
-
-  async function insertDemoConversationRow(row) {
-    const base = {
-      id: row.id,
-      user_id: row.user_id,
-      channel: row.channel,
-      external_conversation_id: row.external_conversation_id,
-      external_user_id: row.external_user_id,
-      title: row.title,
-      status: row.status,
-      last_message_at: row.last_message_at,
-      last_message_preview: row.last_message_preview,
-      intent: row.intent,
-      priority: row.priority,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      manual_mode: row.manual_mode,
-      state: row.state,
-    };
-
-    let payload = { ...base };
-    let { error } = await supabaseAdmin
-      .from("conversations")
-      .upsert(payload, { onConflict: "id" });
-
-    if (!error) return;
-
-    const errText = String(error.message || "").toLowerCase();
-    if (errText.includes("manual_mode")) {
-      const retryPayload = { ...payload };
-      delete retryPayload.manual_mode;
-      const retry = await supabaseAdmin
-        .from("conversations")
-        .upsert(retryPayload, { onConflict: "id" });
-      error = retry.error;
-      payload = retryPayload;
-      if (!error) return;
-    }
-
-    const errText2 = String(error?.message || "").toLowerCase();
-    if (errText2.includes("state")) {
-      const retryPayload = { ...payload };
-      delete retryPayload.state;
-      const retry = await supabaseAdmin
-        .from("conversations")
-        .upsert(retryPayload, { onConflict: "id" });
-      error = retry.error;
-      if (!error) return;
-    }
-
-    throw new Error(error.message);
-  }
-
-  async function generateDemoConversations({
-    userId,
-    count = 12,
-  }) {
-    const safeCount = Math.max(10, Math.min(20, Number(count) || 12));
-    const todayIso = getTodayIsoDateInTimezone(await loadBusinessTimezone(userId));
-    const scenarios = demoScenariosForDate(todayIso);
-    const nowMs = Date.now();
-
-    let conversationsInserted = 0;
-    let messagesInserted = 0;
-
-    for (let i = 0; i < safeCount; i++) {
-      const scenario = scenarios[i % scenarios.length];
-      const conversationId = crypto.randomUUID();
-      const startTimeMs = nowMs - (safeCount - i) * 6 * 60 * 1000;
-      const thread = Array.isArray(scenario.thread) ? scenario.thread : [];
-      const lastTurn = thread.at(-1) || null;
-      const lastPreview = String(lastTurn?.ai || lastTurn?.customer || "").slice(0, 280);
-      const isEscalated = scenario.status === "escalated";
-      const startIso = new Date(startTimeMs).toISOString();
-      const endIso = new Date(startTimeMs + Math.max(thread.length - 1, 0) * 60 * 1000).toISOString();
-
-      await insertDemoConversationRow({
-        id: conversationId,
-        user_id: userId,
-        channel: "dashboard",
-        external_conversation_id: null,
-        external_user_id: null,
-        title: `${scenario.title} ${i + 1}`,
-        status: scenario.status || "waiting_customer",
-        last_message_at: endIso,
-        last_message_preview: lastPreview,
-        intent: scenario.intent || "other",
-        priority: scenario.priority || "normal",
-        manual_mode: isEscalated,
-        state: scenario.state || (isEscalated ? "human_mode" : "idle"),
-        created_at: startIso,
-        updated_at: endIso,
-      });
-
-      conversationsInserted += 1;
-
-      for (let t = 0; t < thread.length; t++) {
-        const turn = thread[t];
-        const createdAt = new Date(startTimeMs + t * 60 * 1000).toISOString();
-        const { error } = await insertMessageWithFallback({
-          user_id: userId,
-          conversation_id: conversationId,
-          channel: "dashboard",
-          customer_message: String(turn.customer || "").trim() || "Hello",
-          ai_reply: String(turn.ai || "").trim() || "Thanks for your message.",
-          model_used: "demo_seed",
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0,
-          estimated_cost_usd: 0,
-          extracted_data: turn.extractedData || { intent: scenario.intent || "other" },
-          escalated: Boolean(turn.escalated),
-          created_at: createdAt,
-        });
-
-        if (error) throw new Error(error.message || "Failed to insert demo message");
-        messagesInserted += 1;
-      }
-    }
-
-    return {
-      conversationsInserted,
-      messagesInserted,
-    };
-  }
 
   /* ================================
     BASIC ROUTES
@@ -1119,9 +511,6 @@ import {
     ].join("\n");
   }
 
-  const ESCALATION_REPLY_MESSAGE =
-    "I want to make sure you get the correct answer, so I've forwarded this to the team. They'll get back to you shortly.";
-
   function evaluateResponseSafety({ text, reply, extractedData }) {
     const content = String(text || "").toLowerCase();
     const aiText = String(reply || "").toLowerCase();
@@ -1176,125 +565,6 @@ import {
       shouldEscalate: confidence === "low" || Boolean(escalationReason),
       isRiskyEscalation,
     };
-  }
-
-  async function findUserByEmail(email) {
-    const { data: authUser, error } = await supabaseAdmin
-      .rpc("get_auth_user_by_email", { lookup_email: email })
-      .maybeSingle();
-
-    if (error) throw new Error(error.message);
-
-    return authUser || null;
-  }
-
-  function buildEscalationNotificationPreview({
-    channel,
-    externalUserId,
-    messageText,
-  }) {
-    const safeChannel = String(channel || "unknown").trim() || "unknown";
-    const safeCustomer = String(externalUserId || "Customer").trim() || "Customer";
-    const safeMessage = String(messageText || "").trim().slice(0, 220) || "Escalated conversation";
-    return `${safeChannel} • ${safeCustomer} • ${safeMessage}`;
-  }
-
-  async function sendEscalationEmailNotification({
-    userId,
-    channel,
-    externalUserId,
-    messagePreview,
-  }) {
-    try {
-      const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.getUserById(userId);
-      if (authErr) {
-        console.error("Escalation email user lookup failed:", authErr.message);
-        return;
-      }
-
-      const toEmail = String(authData?.user?.email || "").trim();
-      if (!toEmail) return;
-
-      const resendApiKey = String(process.env.RESEND_API_KEY || "").trim();
-      const resendFrom = String(process.env.RESEND_FROM_EMAIL || "").trim();
-      if (!resendApiKey || !resendFrom) {
-        console.log(
-          "[NOTIFY] Escalation email skipped (missing RESEND_API_KEY/RESEND_FROM_EMAIL)",
-          { toEmail, channel, externalUserId }
-        );
-        return;
-      }
-
-      const subject = `SupportPilot escalation: ${String(channel || "conversation")}`;
-      const html = `
-        <div>
-          <h2>Escalated conversation</h2>
-          <p><strong>Channel:</strong> ${String(channel || "unknown")}</p>
-          <p><strong>Customer:</strong> ${String(externalUserId || "Unknown")}</p>
-          <p><strong>Preview:</strong> ${String(messagePreview || "")}</p>
-        </div>
-      `.trim();
-
-      const resp = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        signal: AbortSignal.timeout(15000),
-        headers: {
-          Authorization: `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: resendFrom,
-          to: [toEmail],
-          subject,
-          html,
-        }),
-      });
-
-      if (!resp.ok) {
-        const errText = await resp.text();
-        console.error("Escalation email send failed:", errText);
-      }
-    } catch (err) {
-      console.error("Escalation email notification failed:", err?.message || err);
-    }
-  }
-
-  async function createEscalationNotification({
-    userId,
-    conversationId,
-    channel,
-    externalUserId,
-    customerMessage,
-  }) {
-    const preview = buildEscalationNotificationPreview({
-      channel,
-      externalUserId,
-      messageText: customerMessage,
-    });
-
-    const { error } = await supabaseAdmin.from("notifications").insert({
-      user_id: userId,
-      type: "escalation",
-      conversation_id: conversationId,
-      message_preview: preview,
-      read: false,
-    });
-
-    if (error) {
-      const txt = String(error.message || "").toLowerCase();
-      if (txt.includes("notifications") && (txt.includes(DOES_NOT_EXIST_TEXT) || txt.includes(SCHEMA_CACHE_TEXT))) {
-        console.warn("[NOTIFY] notifications table missing; skipping DB notification");
-      } else {
-        throw new Error(error.message);
-      }
-    }
-
-    await sendEscalationEmailNotification({
-      userId,
-      channel,
-      externalUserId,
-      messagePreview: preview,
-    });
   }
 
   const EMPTY_EXTRACTION = {
