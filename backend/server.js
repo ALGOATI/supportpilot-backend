@@ -435,28 +435,13 @@ const dotenvResult = dotenv.config({ path: envPath });
   }
 
   async function loadUserPlan(userId) {
-    // Primary source: businesses table (set by Wix payment webhook)
     const { data, error } = await supabaseAdmin
-      .from("businesses")
-      .select("plan")
-      .eq("id", userId)
-      .maybeSingle();
-
-    if (!error && data?.plan) {
-      return data.plan;
-    }
-
-    // Fallback: client_settings.plan (used when businesses table is unavailable)
-    const { data: settings } = await supabaseAdmin
       .from("client_settings")
       .select("plan")
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (settings?.plan) {
-      return settings.plan;
-    }
-
+    if (!error && data?.plan) return data.plan;
     return "starter";
   }
 

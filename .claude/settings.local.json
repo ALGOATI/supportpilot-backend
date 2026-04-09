@@ -4,7 +4,10 @@
       "Bash(python3 -c \":*)",
       "Bash(npm install:*)",
       "Bash(git push:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(node /Users/khaled/Desktop/supportpilot-backend/backend/scripts/_probe.js)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
     ]
   }
 }
