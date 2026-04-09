@@ -1,4 +1,4 @@
-import dotenv from "dotenv";
+import "./config/env.js"; // loads dotenv + validates required env vars (must be first)
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeBookingExtractionDate } from "./utils/dateNormalization.js";
@@ -18,35 +18,31 @@ import {
   hasAnyModelConfigured,
 } from "./config/modelRouting.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const widgetScriptPath = path.join(__dirname, "widget", "widget.js");
-
-// Always load .env from the same folder as server.js
-const envPath = path.join(__dirname, ".env");
-const dotenvResult = dotenv.config({ path: envPath });
-
   import express from "express";
-  import cors from "cors";
   import helmet from "helmet";
-  import rateLimit from "express-rate-limit";
   import { createClient } from "@supabase/supabase-js";
   import crypto from "node:crypto";
+  import { createCorsMiddleware } from "./config/cors.js";
+  import { publicRateLimit, widgetRateLimit } from "./middleware/rateLimiter.js";
+  import { errorHandler } from "./middleware/errorHandler.js";
+  import {
+    SERVER_ERROR_MESSAGE,
+    SCHEMA_CACHE_TEXT,
+    DOES_NOT_EXIST_TEXT,
+    DEFAULT_TIMEZONE,
+    NOT_PROVIDED_LABEL,
+    OPENROUTER_CHAT_COMPLETIONS_URL,
+    KB_SELECT_FIELDS,
+    BOOKING_SELECT_FIELDS,
+    QUEUED_JOB_SELECT_FIELDS,
+    CONVERSATION_DETAIL_SELECT_FIELDS,
+    MENU_EXTRACTION_ERROR_MESSAGE,
+    CONVERSATION_NOT_FOUND_MESSAGE,
+  } from "./config/constants.js";
 
-  /* ================================
-    REQUIRED ENV VARS
-    Fail fast on startup so Render shows a clear "service failed to start"
-    instead of every request mysteriously returning 500 later.
-  ================================ */
-  const REQUIRED_ENV_VARS = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
-  const missingEnvVars = REQUIRED_ENV_VARS.filter((name) => !process.env[name]);
-  if (missingEnvVars.length > 0) {
-    console.error(
-      `❌ Missing required environment variables: ${missingEnvVars.join(", ")}`
-    );
-    console.error("   Set them in Render (or backend/.env locally) and restart.");
-    process.exit(1);
-  }
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const widgetScriptPath = path.join(__dirname, "widget", "widget.js");
 
   const app = express();
   // Render terminates TLS at a proxy, so trust the first hop. Required for
@@ -55,21 +51,6 @@ const dotenvResult = dotenv.config({ path: envPath });
   const PORT = process.env.PORT || 3001;
   const JOB_WORKER_POLL_MS = Number(process.env.JOB_WORKER_POLL_MS || 500);
   let isJobWorkerRunning = false;
-  const SERVER_ERROR_MESSAGE = "Server error";
-  const SCHEMA_CACHE_TEXT = "schema cache";
-  const DOES_NOT_EXIST_TEXT = "does not exist";
-  const DEFAULT_TIMEZONE = "Europe/Stockholm";
-  const NOT_PROVIDED_LABEL = "Not provided";
-  const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
-  const KB_SELECT_FIELDS = "question,answer,updated_at";
-  const BOOKING_SELECT_FIELDS =
-    "id,user_id,conversation_id,external_user_id,customer_name,customer_phone,booking_date,booking_time,people,status,source_channel,created_at,updated_at";
-  const QUEUED_JOB_SELECT_FIELDS =
-    "id,user_id,conversation_id,channel,customer_message,status,attempts,created_at";
-  const CONVERSATION_DETAIL_SELECT_FIELDS =
-    "id,title,status,state,priority,intent,channel,external_conversation_id,external_user_id,last_message_at,last_message_preview,manual_mode,ai_paused";
-  const MENU_EXTRACTION_ERROR_MESSAGE = "Could not extract menu. Try another photo.";
-  const CONVERSATION_NOT_FOUND_MESSAGE = "Conversation not found";
 
   /* ================================
     SECURITY HEADERS
@@ -81,67 +62,7 @@ const dotenvResult = dotenv.config({ path: envPath });
     })
   );
 
-  /* ================================
-    CORS
-    Set ALLOWED_ORIGINS in Render to allow dashboard access:
-    Example: ALLOWED_ORIGINS=https://your-dashboard.vercel.app,https://your-custom-domain.com
-    In production, requests from unlisted origins will be blocked.
-    Webhook endpoints (WhatsApp, Wix) don't send an Origin header, so they're unaffected.
-  ================================ */
-  const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
-    : [];
-
-  app.use(
-    cors({
-      origin: (origin, callback) => {
-        // Allow requests with no origin (server-to-server, curl, webhooks)
-        if (!origin) return callback(null, true);
-
-        if (allowedOrigins.length === 0) {
-          // No origins configured — reject in production, allow in development.
-          // IMPORTANT: never pass an Error to the callback, or `cors` will call
-          // next(err) and (without an error handler) Express returns 500 even
-          // for OPTIONS preflight. Return `false` instead — the browser then
-          // blocks the response cleanly with a normal CORS error.
-          if (process.env.NODE_ENV === "production") {
-            console.warn(`⚠️ CORS: Blocked request from ${origin} — ALLOWED_ORIGINS not configured`);
-            return callback(null, false);
-          }
-          return callback(null, true);
-        }
-
-        if (allowedOrigins.includes(origin)) {
-          return callback(null, true);
-        }
-
-        console.warn(`⚠️ CORS: Blocked request from ${origin}`);
-        return callback(null, false);
-      },
-      credentials: true,
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-    })
-  );
-
-  /* ================================
-    RATE LIMITING
-  ================================ */
-  const publicRateLimit = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 30,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: "Too many requests, please try again later." },
-  });
-
-  const widgetRateLimit = rateLimit({
-    windowMs: 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: "Too many requests, please try again later." },
-  });
+  app.use(createCorsMiddleware());
 
   app.use(express.json({
     limit: '1mb',
@@ -150,11 +71,7 @@ const dotenvResult = dotenv.config({ path: envPath });
 
   console.log("✅ CORS middleware applied");
   console.log("🚀 Starting SupportPilot backend on port:", PORT);
-  console.log("[DEBUG] dotenv envPath:", envPath);
-  console.log("[DEBUG] dotenv loaded:", !dotenvResult.error);
-  console.log("[DEBUG] process.cwd():", process.cwd());
   console.log("[DEBUG] __dirname:", __dirname);
-  console.log("[INFO] WIX_WEBHOOK_SECRET configured:", !!process.env.WIX_WEBHOOK_SECRET);
 
   /* ================================
     SUPABASE ADMIN CLIENT
@@ -7287,17 +7204,7 @@ Rules:
     }
   });
 
-  /* ================================
-    GLOBAL ERROR HANDLER
-    Must be registered after all routes. Catches any thrown error or
-    next(err) call and returns JSON instead of Express's default HTML 500.
-  ================================ */
-  // eslint-disable-next-line no-unused-vars
-  app.use((err, _req, res, _next) => {
-    console.error("Unhandled error:", err?.stack || err?.message || err);
-    if (res.headersSent) return;
-    res.status(500).json({ error: SERVER_ERROR_MESSAGE });
-  });
+  app.use(errorHandler);
 
   /* ================================
     START SERVER
