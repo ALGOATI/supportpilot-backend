@@ -44,6 +44,7 @@ import {
     normalizeSetupMenuItems,
   } from "./services/setupService.js";
   import { createConversationStoreService } from "./services/conversationStoreService.js";
+  import { createDemoRouter } from "./routes/demo.js";
   import {
     styleRules,
     parsePricingMap,
@@ -1171,33 +1172,13 @@ import {
 
   // --- End multi-client WhatsApp integration endpoints ---
 
-  app.post("/api/demo/generate", requireSupabaseUser, async (req, res) => {
-    try {
-      const requestedCount = Number(req.body?.count);
-      const count = Number.isFinite(requestedCount) ? requestedCount : 12;
-
-      await setUserDemoModeFlag({
-        userId: req.user.id,
-        enabled: true,
-      });
-
-      const result = await generateDemoConversations({
-        userId: req.user.id,
-        count,
-      });
-
-      return res.json({
-        ok: true,
-        demoMode: true,
-        count: Math.max(10, Math.min(20, Number(count) || 12)),
-        conversationsInserted: result.conversationsInserted,
-        messagesInserted: result.messagesInserted,
-      });
-    } catch (e) {
-      console.error("Demo generation failed:", e);
-      return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
-    }
-  });
+  app.use(
+    createDemoRouter({
+      requireSupabaseUser,
+      setUserDemoModeFlag,
+      generateDemoConversations,
+    })
+  );
 
   app.post("/api/inbound", publicRateLimit, requireSupabaseUser, async (req, res) => {
     try {
