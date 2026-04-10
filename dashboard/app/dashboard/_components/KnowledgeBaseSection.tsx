@@ -3,7 +3,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { getBackendUrl } from "@/lib/backend-url";
-import DashboardShell from "../_components/DashboardShell";
 
 type KnowledgeRow = {
   id: string;
@@ -16,7 +15,7 @@ type KnowledgeRow = {
   updated_at: string;
 };
 
-export default function KnowledgePage() {
+export default function KnowledgeBaseSection() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -75,7 +74,6 @@ export default function KnowledgePage() {
     const answer = newAnswer.trim();
     if (!question || !answer) return;
 
-    // Check knowledge limit before adding
     if (knowledgeLimit?.limitReached) return;
 
     setSavingId("new");
@@ -150,9 +148,8 @@ export default function KnowledgePage() {
   }
 
   return (
-    <DashboardShell title="Knowledge Base" subtitle="Learned and manual business answers">
-      <div style={{ maxWidth: 980 }}>
-      <div style={{ marginTop: 16, border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 12, background: "white" }}>
+    <div>
+      <div style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 12, background: "white" }}>
         <h2 style={{ marginTop: 0, fontSize: 18 }}>Add manual knowledge</h2>
 
         {knowledgeLimit && knowledgeLimit.max > 0 && (
@@ -291,8 +288,7 @@ export default function KnowledgePage() {
           ))
         )}
       </div>
-      </div>
-    </DashboardShell>
+    </div>
   );
 }
 

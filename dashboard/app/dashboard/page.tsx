@@ -269,7 +269,7 @@ export default function DashboardPage() {
         ) : null}
         <div style={{ marginTop: 8 }}>
           <Link
-            href="/dashboard/settings"
+            href="/dashboard/integrations"
             style={{
               fontSize: 13,
               fontWeight: 700,

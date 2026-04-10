@@ -31,8 +31,8 @@ const navItems = [
   { href: "/dashboard/reports", key: "reports", icon: "◩" },
   { href: "/dashboard/chat", key: "chat_test", icon: "◎" },
   { href: "/dashboard/business", key: "business_setup", icon: "◬" },
-  { href: "/dashboard/knowledge", key: "knowledge", icon: "◨" },
-  { href: "/dashboard/settings", key: "settings", icon: "⚙" },
+  { href: "/dashboard/integrations", key: "integrations", icon: "◨" },
+  { href: "/dashboard/settings", key: "ai_settings", icon: "⚙" },
 ];
 
 export default function DashboardShell({ title, subtitle, children }: ShellProps) {

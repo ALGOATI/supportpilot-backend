@@ -3,7 +3,17 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import DashboardShell from "../_components/DashboardShell";
+import KnowledgeBaseSection from "../_components/KnowledgeBaseSection";
 import { getBackendUrl } from "@/lib/backend-url";
+
+type TabKey =
+  | "profile"
+  | "hours"
+  | "menu"
+  | "faqs"
+  | "booking"
+  | "business_info"
+  | "knowledge";
 
 type HourRow = {
   id?: string;
@@ -110,6 +120,12 @@ export default function BusinessSetupPage() {
   const [requirePhone, setRequirePhone] = useState(true);
   const [maxPartySize, setMaxPartySize] = useState("");
 
+  const [businessInfo, setBusinessInfo] = useState("");
+  const [savingBusinessInfo, setSavingBusinessInfo] = useState(false);
+  const [businessInfoStatus, setBusinessInfoStatus] = useState<string | null>(null);
+
+  const [activeTab, setActiveTab] = useState<TabKey>("profile");
+
   useEffect(() => {
     let cancelled = false;
 
@@ -125,7 +141,7 @@ export default function BusinessSetupPage() {
 
       setUserId(user.id);
 
-      const [profileRes, hoursRes, menuRes, faqRes, rulesRes] = await Promise.all([
+      const [profileRes, hoursRes, menuRes, faqRes, rulesRes, clientSettingsRes] = await Promise.all([
         supabase
           .from("business_profiles")
           .select("business_name,niche,phone,address,timezone")
@@ -150,6 +166,11 @@ export default function BusinessSetupPage() {
           .select("booking_enabled,require_name,require_phone,max_party_size")
           .eq("user_id", user.id)
           .maybeSingle(),
+        supabase
+          .from("client_settings")
+          .select("business")
+          .eq("user_id", user.id)
+          .maybeSingle(),
       ]);
 
       if (cancelled) return;
@@ -159,6 +180,11 @@ export default function BusinessSetupPage() {
       if (menuRes.error) console.error(menuRes.error);
       if (faqRes.error) console.error(faqRes.error);
       if (rulesRes.error) console.error(rulesRes.error);
+      if (clientSettingsRes.error) console.error(clientSettingsRes.error);
+
+      if (clientSettingsRes.data) {
+        setBusinessInfo(clientSettingsRes.data.business ?? "");
+      }
 
       if (profileRes.data) {
         setBusinessName(profileRes.data.business_name ?? "");
@@ -376,6 +402,31 @@ export default function BusinessSetupPage() {
     }
   }
 
+  async function saveBusinessInfo() {
+    if (!userId) return;
+    setSavingBusinessInfo(true);
+    setBusinessInfoStatus(null);
+    try {
+      const { error } = await supabase
+        .from("client_settings")
+        .upsert(
+          {
+            user_id: userId,
+            business: businessInfo,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
+      if (error) throw error;
+      setBusinessInfoStatus("Saved business info.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setBusinessInfoStatus(`Save failed: ${message}`);
+    } finally {
+      setSavingBusinessInfo(false);
+    }
+  }
+
   async function saveAll() {
     if (!userId) return;
 
@@ -564,7 +615,56 @@ export default function BusinessSetupPage() {
         Structured data is used by AI before legacy business text.
       </p>
 
+      <div
+        role="tablist"
+        style={{
+          marginTop: 16,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 6,
+          borderBottom: "1px solid rgba(0,0,0,0.1)",
+          paddingBottom: 0,
+        }}
+      >
+        {(
+          [
+            { key: "profile", label: "Profile" },
+            { key: "hours", label: "Hours" },
+            { key: "menu", label: "Menu" },
+            { key: "faqs", label: "FAQs" },
+            { key: "booking", label: "Booking Rules" },
+            { key: "business_info", label: "Business Info" },
+            { key: "knowledge", label: "Knowledge Base" },
+          ] as Array<{ key: TabKey; label: string }>
+        ).map((tab) => {
+          const active = activeTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveTab(tab.key)}
+              style={{
+                padding: "8px 14px",
+                borderRadius: "10px 10px 0 0",
+                border: "1px solid rgba(0,0,0,0.1)",
+                borderBottom: active ? "1px solid white" : "1px solid transparent",
+                marginBottom: -1,
+                background: active ? "white" : "#f8fafc",
+                color: active ? "#0f172a" : "#475569",
+                fontWeight: 700,
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+        {activeTab === "profile" && (
         <section
           style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
         >
@@ -617,7 +717,9 @@ export default function BusinessSetupPage() {
             />
           </label>
         </section>
+        )}
 
+        {activeTab === "hours" && (
         <section
           style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
         >
@@ -672,7 +774,9 @@ export default function BusinessSetupPage() {
             ))}
           </div>
         </section>
+        )}
 
+        {activeTab === "menu" && (
         <section
           style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
         >
@@ -899,7 +1003,9 @@ export default function BusinessSetupPage() {
             {!hasMenuItems && <p style={{ color: "#6b7280" }}>No menu items yet.</p>}
           </div>
         </section>
+        )}
 
+        {activeTab === "faqs" && (
         <section
           style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
         >
@@ -954,7 +1060,9 @@ export default function BusinessSetupPage() {
             {faqs.length === 0 && <p style={{ color: "#6b7280" }}>No FAQs yet.</p>}
           </div>
         </section>
+        )}
 
+        {activeTab === "booking" && (
         <section
           style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
         >
@@ -995,25 +1103,77 @@ export default function BusinessSetupPage() {
             </label>
           </div>
         </section>
+        )}
+
+        {activeTab === "business_info" && (
+          <section
+            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
+          >
+            <h2 style={{ marginTop: 0 }}>Business Info</h2>
+            <p style={{ marginTop: 0, color: "#6b7280", fontSize: 13 }}>
+              Free-text business information. The AI is only allowed to use what you put here. Structured data above is used first.
+            </p>
+            <textarea
+              value={businessInfo}
+              onChange={(e) => setBusinessInfo(e.target.value)}
+              rows={12}
+              style={{ ...areaStyle, minHeight: 220 }}
+              placeholder="Paste business info: hours, address, services, booking rules, policies, FAQs…"
+            />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+              <button
+                onClick={saveBusinessInfo}
+                disabled={savingBusinessInfo}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(0,0,0,0.15)",
+                  background: savingBusinessInfo ? "#e5e7eb" : "white",
+                  cursor: savingBusinessInfo ? "not-allowed" : "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                {savingBusinessInfo ? "Saving..." : "Save business info"}
+              </button>
+              {businessInfoStatus && (
+                <span style={{ fontWeight: 600 }}>{businessInfoStatus}</span>
+              )}
+            </div>
+          </section>
+        )}
+
+        {activeTab === "knowledge" && (
+          <section
+            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
+          >
+            <h2 style={{ marginTop: 0 }}>Knowledge Base</h2>
+            <p style={{ marginTop: 0, color: "#6b7280", fontSize: 13 }}>
+              Manual Q&amp;A entries plus answers learned from human replies.
+            </p>
+            <KnowledgeBaseSection />
+          </section>
+        )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
-        <button
-          onClick={saveAll}
-          disabled={saving}
-          style={{
-            padding: "10px 16px",
-            borderRadius: 10,
-            border: "1px solid rgba(0,0,0,0.15)",
-            background: saving ? "#e5e7eb" : "white",
-            cursor: saving ? "not-allowed" : "pointer",
-            fontWeight: 700,
-          }}
-        >
-          {saving ? "Saving..." : "Save all"}
-        </button>
-        {status && <span style={{ fontWeight: 600 }}>{status}</span>}
-      </div>
+      {activeTab !== "business_info" && activeTab !== "knowledge" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
+          <button
+            onClick={saveAll}
+            disabled={saving}
+            style={{
+              padding: "10px 16px",
+              borderRadius: 10,
+              border: "1px solid rgba(0,0,0,0.15)",
+              background: saving ? "#e5e7eb" : "white",
+              cursor: saving ? "not-allowed" : "pointer",
+              fontWeight: 700,
+            }}
+          >
+            {saving ? "Saving..." : "Save all"}
+          </button>
+          {status && <span style={{ fontWeight: 600 }}>{status}</span>}
+        </div>
+      )}
       </div>
     </DashboardShell>
   );
