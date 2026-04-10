@@ -11,13 +11,6 @@ type HourRow = {
   close_time: string;
 };
 
-type MenuRow = {
-  name: string;
-  price: string;
-  description: string;
-  category: string;
-};
-
 const dayRows: Array<{ label: string; day_of_week: number }> = [
   { label: "Monday", day_of_week: 1 },
   { label: "Tuesday", day_of_week: 2 },
@@ -70,11 +63,13 @@ export default function SetupPage() {
   const [timezone, setTimezone] = useState("Europe/Stockholm");
 
   const [hours, setHours] = useState<HourRow[]>(defaultHours());
-  const [menuItems, setMenuItems] = useState<MenuRow[]>([]);
 
-  const [bookingRequired, setBookingRequired] = useState(true);
-  const [maxPartySize, setMaxPartySize] = useState("");
-  const [advanceNoticeMinutes, setAdvanceNoticeMinutes] = useState("");
+  // WhatsApp state
+  const [waPhoneNumberId, setWaPhoneNumberId] = useState("");
+  const [waWabaId, setWaWabaId] = useState("");
+  const [waAccessToken, setWaAccessToken] = useState("");
+  const [waConnected, setWaConnected] = useState(false);
+  const [waStatus, setWaStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,47 +197,34 @@ export default function SetupPage() {
     }
   }
 
-  async function saveMenuStep() {
+  async function connectWhatsApp() {
     const token = await getTokenOrRedirect();
     if (!token) return;
 
-    const resp = await fetch(`${backendUrl}/api/setup/menu`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ items: menuItems }),
-    });
-
-    if (!resp.ok) {
-      const json = await resp.json().catch(() => null);
-      throw new Error(json?.error || "Failed to save menu items");
+    if (!waPhoneNumberId.trim() || !waWabaId.trim() || !waAccessToken.trim()) {
+      throw new Error("All three WhatsApp fields are required");
     }
-  }
 
-  async function saveBookingRulesAndComplete() {
-    const token = await getTokenOrRedirect();
-    if (!token) return;
-
-    const resp = await fetch(`${backendUrl}/api/setup/booking-rules`, {
+    const resp = await fetch(`${backendUrl}/api/integrations/whatsapp/connect`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        booking_required: bookingRequired,
-        max_party_size: maxPartySize.trim() ? Number(maxPartySize) : null,
-        advance_notice_minutes: advanceNoticeMinutes.trim()
-          ? Number(advanceNoticeMinutes)
-          : null,
+        phone_number_id: waPhoneNumberId.trim(),
+        waba_id: waWabaId.trim(),
+        access_token: waAccessToken.trim(),
       }),
     });
 
-    if (!resp.ok) {
-      const json = await resp.json().catch(() => null);
-      throw new Error(json?.error || "Failed to save booking rules");
+    const json = await resp.json();
+    if (resp.ok && json.ok) {
+      setWaConnected(true);
+      setWaAccessToken("");
+      setWaStatus("Connected successfully");
+    } else {
+      throw new Error(json.error || "WhatsApp connection failed");
     }
   }
 
@@ -251,18 +233,23 @@ export default function SetupPage() {
     setSubmitting(true);
     try {
       if (step === 1) {
+        await saveBusinessStep();
         setStep(2);
       } else if (step === 2) {
-        await saveBusinessStep();
-        setStep(3);
-      } else if (step === 3) {
         await saveHoursStep();
-        setStep(4);
-      } else if (step === 4) {
-        await saveMenuStep();
-        setStep(5);
+        setStep(3);
       } else {
-        await saveBookingRulesAndComplete();
+        // Step 3: WhatsApp — connect if fields filled, then finish
+        if (waPhoneNumberId.trim() && waWabaId.trim() && waAccessToken.trim()) {
+          await connectWhatsApp();
+        }
+        // Mark setup complete via skip endpoint (it marks onboarding_completed)
+        const token = await getTokenOrRedirect();
+        if (!token) return;
+        await fetch(`${backendUrl}/api/setup/skip`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
         router.push("/dashboard");
       }
     } catch (err: unknown) {
@@ -271,10 +258,6 @@ export default function SetupPage() {
     } finally {
       setSubmitting(false);
     }
-  }
-
-  function addMenuRow() {
-    setMenuItems((prev) => [...prev, { name: "", price: "", description: "", category: "" }]);
   }
 
   if (loading) {
@@ -298,7 +281,7 @@ export default function SetupPage() {
           <div>
             <h1 style={{ margin: 0, fontSize: 30, fontWeight: 900, color: "#0f172a" }}>Setup wizard</h1>
             <p style={{ margin: "6px 0 0", color: "#475569" }}>
-              Step {step} of 5
+              Step {step} of 3
             </p>
           </div>
           <button
@@ -321,11 +304,25 @@ export default function SetupPage() {
 
         {step === 1 ? (
           <section style={cardStyle}>
-            <h2 style={{ marginTop: 0, marginBottom: 14 }}>Step 1: Business info</h2>
+            <h2 style={{ marginTop: 0, marginBottom: 14 }}>Step 1: Business profile</h2>
             <div style={{ display: "grid", gap: 10 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span>Business name</span>
                 <input style={inputStyle} value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Business type</span>
+                <select
+                  style={inputStyle}
+                  value={businessType}
+                  onChange={(e) => setBusinessType(e.target.value)}
+                >
+                  <option value="restaurant">Restaurant</option>
+                  <option value="barber">Barber</option>
+                  <option value="clinic">Clinic</option>
+                  <option value="retail">Retail</option>
+                  <option value="other">Other</option>
+                </select>
               </label>
               <label style={{ display: "grid", gap: 6 }}>
                 <span>Address</span>
@@ -340,35 +337,15 @@ export default function SetupPage() {
                 <input style={inputStyle} value={timezone} onChange={(e) => setTimezone(e.target.value)} />
               </label>
             </div>
+            <p style={{ marginTop: 10, color: "#475569", fontSize: 13 }}>
+              We use the business type to optimize AI behavior from day one.
+            </p>
           </section>
         ) : null}
 
         {step === 2 ? (
           <section style={cardStyle}>
-            <h2 style={{ marginTop: 0, marginBottom: 14 }}>Step 2: Select business type</h2>
-            <p style={{ marginTop: 0, color: "#475569" }}>
-              We use this template to optimize AI behavior from day one.
-            </p>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Business type</span>
-              <select
-                style={inputStyle}
-                value={businessType}
-                onChange={(e) => setBusinessType(e.target.value)}
-              >
-                <option value="restaurant">Restaurant</option>
-                <option value="barber">Barber</option>
-                <option value="clinic">Clinic</option>
-                <option value="retail">Retail</option>
-                <option value="other">Other</option>
-              </select>
-            </label>
-          </section>
-        ) : null}
-
-        {step === 3 ? (
-          <section style={cardStyle}>
-            <h2 style={{ marginTop: 0, marginBottom: 14 }}>Step 3: Opening hours</h2>
+            <h2 style={{ marginTop: 0, marginBottom: 14 }}>Step 2: Opening hours</h2>
             <div style={{ display: "grid", gap: 8 }}>
               {hours.map((row, idx) => (
                 <div
@@ -421,136 +398,67 @@ export default function SetupPage() {
           </section>
         ) : null}
 
-        {step === 4 ? (
+        {step === 3 ? (
           <section style={cardStyle}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-              <h2 style={{ margin: 0 }}>Step 4: Menu (optional)</h2>
-              <button
-                type="button"
-                onClick={addMenuRow}
+            <h2 style={{ marginTop: 0, marginBottom: 14 }}>Step 3: Connect WhatsApp</h2>
+            <p style={{ marginTop: 0, color: "#475569", fontSize: 13 }}>
+              Connect your WhatsApp Business account so customers can reach you. You can also set this up later from the Integrations page.
+            </p>
+
+            {waConnected ? (
+              <div
                 style={{
-                  border: "1px solid #cbd5e1",
-                  background: "#fff",
-                  color: "#0f172a",
+                  padding: "12px 14px",
                   borderRadius: 10,
-                  padding: "8px 12px",
+                  background: "#dcfce7",
+                  border: "1px solid #bbf7d0",
+                  color: "#166534",
                   fontWeight: 700,
-                  cursor: "pointer",
+                  fontSize: 14,
                 }}
               >
-                Add item
-              </button>
-            </div>
-
-            {menuItems.length === 0 ? (
-              <p style={{ color: "#64748b" }}>No items added yet. You can continue and add later.</p>
+                WhatsApp connected successfully
+              </div>
             ) : (
-              <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-                {menuItems.map((row, idx) => (
-                  <div
-                    key={`menu-row-${idx}`}
-                    style={{
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 10,
-                      padding: 10,
-                      display: "grid",
-                      gridTemplateColumns: "2fr 1fr 2fr 1fr auto",
-                      gap: 8,
-                    }}
-                  >
-                    <input
-                      style={inputStyle}
-                      placeholder="Name"
-                      value={row.name}
-                      onChange={(e) => {
-                        const next = [...menuItems];
-                        next[idx] = { ...next[idx], name: e.target.value };
-                        setMenuItems(next);
-                      }}
-                    />
-                    <input
-                      style={inputStyle}
-                      placeholder="Price"
-                      value={row.price}
-                      onChange={(e) => {
-                        const next = [...menuItems];
-                        next[idx] = { ...next[idx], price: e.target.value };
-                        setMenuItems(next);
-                      }}
-                    />
-                    <input
-                      style={inputStyle}
-                      placeholder="Description"
-                      value={row.description}
-                      onChange={(e) => {
-                        const next = [...menuItems];
-                        next[idx] = { ...next[idx], description: e.target.value };
-                        setMenuItems(next);
-                      }}
-                    />
-                    <input
-                      style={inputStyle}
-                      placeholder="Category"
-                      value={row.category}
-                      onChange={(e) => {
-                        const next = [...menuItems];
-                        next[idx] = { ...next[idx], category: e.target.value };
-                        setMenuItems(next);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setMenuItems((prev) => prev.filter((_, i) => i !== idx))}
-                      style={{
-                        border: "1px solid #fecaca",
-                        color: "#b91c1c",
-                        background: "#fff5f5",
-                        borderRadius: 10,
-                        padding: "8px 10px",
-                        fontWeight: 700,
-                        cursor: "pointer",
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))}
+              <div style={{ display: "grid", gap: 10 }}>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>Phone Number ID</span>
+                  <input
+                    type="text"
+                    value={waPhoneNumberId}
+                    onChange={(e) => setWaPhoneNumberId(e.target.value)}
+                    placeholder="e.g. 123456789012345"
+                    style={inputStyle}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>WhatsApp Business Account ID</span>
+                  <input
+                    type="text"
+                    value={waWabaId}
+                    onChange={(e) => setWaWabaId(e.target.value)}
+                    placeholder="e.g. 109876543210"
+                    style={inputStyle}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 4 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>Permanent Access Token</span>
+                  <input
+                    type="password"
+                    value={waAccessToken}
+                    onChange={(e) => setWaAccessToken(e.target.value)}
+                    placeholder="Paste your token here"
+                    style={inputStyle}
+                  />
+                </label>
               </div>
             )}
-          </section>
-        ) : null}
 
-        {step === 5 ? (
-          <section style={cardStyle}>
-            <h2 style={{ marginTop: 0, marginBottom: 14 }}>Step 5: Booking rules (optional)</h2>
-            <div style={{ display: "grid", gap: 12 }}>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-                <input
-                  type="checkbox"
-                  checked={bookingRequired}
-                  onChange={(e) => setBookingRequired(e.target.checked)}
-                />
-                Booking required
-              </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span>Max party size</span>
-                <input
-                  style={inputStyle}
-                  placeholder="Optional"
-                  value={maxPartySize}
-                  onChange={(e) => setMaxPartySize(e.target.value)}
-                />
-              </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span>Advance notice (minutes)</span>
-                <input
-                  style={inputStyle}
-                  placeholder="Optional"
-                  value={advanceNoticeMinutes}
-                  onChange={(e) => setAdvanceNoticeMinutes(e.target.value)}
-                />
-              </label>
-            </div>
+            {waStatus && (
+              <div style={{ marginTop: 8, fontWeight: 700, fontSize: 13, color: "#166534" }}>
+                {waStatus}
+              </div>
+            )}
           </section>
         ) : null}
 
@@ -586,7 +494,7 @@ export default function SetupPage() {
               cursor: submitting ? "not-allowed" : "pointer",
             }}
           >
-            {submitting ? "Saving..." : step === 5 ? "Finish setup" : "Save and continue"}
+            {submitting ? "Saving..." : step === 3 ? "Finish setup" : "Save and continue"}
           </button>
         </div>
 

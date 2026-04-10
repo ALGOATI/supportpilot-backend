@@ -232,55 +232,79 @@ export default function DashboardPage() {
         <MetricCard label={tr("active_conversations")} value={analytics.activeConversations} />
         <MetricCard label={tr("current_plan")} value={String(analytics.plan || "starter")} />
       </div>
-      <div
-        style={{
-          maxWidth: 1000,
-          marginTop: 12,
-          borderRadius: 12,
-          border: "1px solid rgba(15,23,42,0.08)",
-          background: "white",
-          padding: "14px 16px",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <strong style={{ color: "#0f172a", fontSize: 15 }}>{tr("launch_status")}</strong>
-          <span
-            style={{
-              color: releaseStatus?.ready_to_launch ? "#166534" : "#92400e",
-              fontWeight: 700,
-              fontSize: 13,
-            }}
-          >
-            {releaseStatus?.ready_to_launch ? tr("ready_to_launch") : tr("setup_incomplete")}
-          </span>
-        </div>
-        <div style={{ marginTop: 6, color: "#334155", fontWeight: 600, fontSize: 14 }}>
-          {releaseStatus
-            ? `${releaseStatus.completion.done}/${releaseStatus.completion.total} ${tr("checks_complete")}`
-            : "—"}
-        </div>
-        {releaseStatus && !releaseStatus.ready_to_launch ? (
-          <div style={{ marginTop: 8, color: "#475569", fontSize: 13 }}>
-            {tr("missing_label")}{" "}
-            {releaseStatus.missing_items
-              .map((key) => checklistLabels[key] || key)
-              .join(", ")}
+      {releaseStatus && !releaseStatus.ready_to_launch ? (
+        <div
+          style={{
+            maxWidth: 1000,
+            marginTop: 12,
+            borderRadius: 12,
+            border: "1px solid rgba(15,23,42,0.08)",
+            background: "white",
+            padding: "14px 16px",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <strong style={{ color: "#0f172a", fontSize: 15 }}>{tr("launch_status")}</strong>
+            <span
+              style={{
+                display: "inline-flex",
+                padding: "4px 10px",
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 800,
+                color: "#92400e",
+                background: "#fef3c7",
+              }}
+            >
+              {tr("setup_incomplete")}
+            </span>
           </div>
-        ) : null}
-        <div style={{ marginTop: 8 }}>
-          <Link
-            href="/dashboard/integrations"
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: "#1d4ed8",
-              textDecoration: "none",
-            }}
-          >
-            {tr("open_release_checklist")}
-          </Link>
+          <div style={{ marginTop: 6, color: "#334155", fontWeight: 600, fontSize: 14 }}>
+            {releaseStatus.completion.done}/{releaseStatus.completion.total} {tr("checks_complete")}
+          </div>
+          <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+            {(Object.entries(releaseStatus.checks) as Array<[keyof ReleaseChecks, boolean]>).map(
+              ([key, done]) => {
+                const linkMap: Record<keyof ReleaseChecks, string> = {
+                  business_profile_completed: "/dashboard/business?tab=profile",
+                  opening_hours_configured: "/dashboard/business?tab=hours",
+                  business_type_selected: "/dashboard/business?tab=profile",
+                  whatsapp_connected: "/dashboard/integrations",
+                  ai_enabled: "/dashboard/settings",
+                  plan_selected: "/dashboard/integrations",
+                };
+                return (
+                  <Link
+                    key={key}
+                    href={done ? "#" : linkMap[key]}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      border: "1px solid rgba(15,23,42,0.08)",
+                      borderRadius: 10,
+                      padding: "8px 10px",
+                      textDecoration: "none",
+                      color: "#0f172a",
+                    }}
+                  >
+                    <span style={{ fontWeight: 600 }}>{checklistLabels[key]}</span>
+                    <span
+                      style={{
+                        color: done ? "#166534" : "#b91c1c",
+                        fontWeight: 800,
+                        fontSize: 12,
+                      }}
+                    >
+                      {done ? "Complete" : "Needs setup"}
+                    </span>
+                  </Link>
+                );
+              }
+            )}
+          </div>
         </div>
-      </div>
+      ) : null}
       <div
         style={{
           maxWidth: 1000,

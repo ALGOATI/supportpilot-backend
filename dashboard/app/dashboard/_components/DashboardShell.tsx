@@ -22,7 +22,7 @@ type NotificationRow = {
   type: "escalation";
 };
 
-const navItems = [
+const mainNavItems = [
   { href: "/dashboard", key: "overview", icon: "◧" },
   { href: "/dashboard/inbox", key: "inbox", icon: "◫" },
   { href: "/dashboard/escalated", key: "escalated_nav", icon: "⚠" },
@@ -30,10 +30,15 @@ const navItems = [
   { href: "/dashboard/analytics", key: "analytics", icon: "◪" },
   { href: "/dashboard/reports", key: "reports", icon: "◩" },
   { href: "/dashboard/chat", key: "chat_test", icon: "◎" },
-  { href: "/dashboard/business", key: "business_setup", icon: "◬" },
-  { href: "/dashboard/integrations", key: "integrations", icon: "◨" },
-  { href: "/dashboard/settings", key: "ai_settings", icon: "⚙" },
 ];
+
+const settingsNavItems = [
+  { href: "/dashboard/business", key: "business_setup", icon: "◬" },
+  { href: "/dashboard/settings", key: "ai_settings", icon: "⚙" },
+  { href: "/dashboard/integrations", key: "integrations", icon: "◨" },
+];
+
+const isDevMode = process.env.NODE_ENV === "development";
 
 export default function DashboardShell({ title, subtitle, children }: ShellProps) {
   const pathname = usePathname();
@@ -139,7 +144,7 @@ export default function DashboardShell({ title, subtitle, children }: ShellProps
       <aside className={`${styles.sidebar} ${sidebarOpen ? styles.sidebarOpen : ""}`}>
         <div className={styles.brand}>SupportPilot</div>
         <nav className={styles.nav}>
-          {navItems.map((item) => {
+          {mainNavItems.map((item) => {
             const active =
               pathname === item.href ||
               (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`));
@@ -157,6 +162,35 @@ export default function DashboardShell({ title, subtitle, children }: ShellProps
               </Link>
             );
           })}
+          <div style={{ borderTop: "1px solid #e5e9f2", margin: "4px 0" }} />
+          {settingsNavItems.map((item) => {
+            const active =
+              pathname === item.href ||
+              (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`));
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`${styles.navLink} ${active ? styles.navLinkActive : ""}`}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <span className={styles.navIcon} aria-hidden="true">
+                  {item.icon}
+                </span>
+                <span>{tr(item.key)}</span>
+              </Link>
+            );
+          })}
+          {isDevMode && (
+            <Link
+              href="/dashboard/devtools"
+              className={`${styles.navLink} ${pathname === "/dashboard/devtools" ? styles.navLinkActive : ""}`}
+              onClick={() => setSidebarOpen(false)}
+            >
+              <span className={styles.navIcon} aria-hidden="true">⚒</span>
+              <span>{tr("devtools")}</span>
+            </Link>
+          )}
         </nav>
         <div className={styles.sidebarFooter}>{tr("support_workspace")}</div>
       </aside>

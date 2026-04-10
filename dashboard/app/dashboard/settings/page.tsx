@@ -10,6 +10,28 @@ import UpgradePrompt from "../_components/UpgradePrompt";
 type Tone = "professional" | "friendly" | "casual";
 type ReplyLength = "concise" | "normal" | "detailed";
 
+const sectionStyle: React.CSSProperties = {
+  border: "1px solid rgba(0,0,0,0.12)",
+  borderRadius: 14,
+  padding: 14,
+  background: "white",
+};
+
+const sectionTitleStyle: React.CSSProperties = {
+  fontWeight: 900,
+  marginBottom: 10,
+  color: "#111827",
+  fontSize: 16,
+};
+
+const selectStyle: React.CSSProperties = {
+  padding: 10,
+  borderRadius: 10,
+  border: "1px solid rgba(0,0,0,0.15)",
+  background: "white",
+  color: "#111827",
+};
+
 export default function AISettingsPage() {
   const router = useRouter();
 
@@ -107,19 +129,10 @@ export default function AISettingsPage() {
     <DashboardShell title={t(dashboardLanguage, "ai_settings")} subtitle={t(dashboardLanguage, "ai_settings_subtitle")}>
       <div style={{ maxWidth: 900, color: "#111827" }}>
         <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
-          {/* AI Style */}
-          <div
-            style={{
-              border: "1px solid rgba(0,0,0,0.12)",
-              borderRadius: 14,
-              padding: 14,
-              background: "white",
-            }}
-          >
-            <div style={{ fontWeight: 900, marginBottom: 10, color: "#111827" }}>
-              {t(dashboardLanguage, "ai_style")}
-            </div>
 
+          {/* ─── Response Style ─── */}
+          <div style={sectionStyle}>
+            <div style={sectionTitleStyle}>Response Style</div>
             <div style={{ display: "grid", gap: 12 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontWeight: 800 }}>{t(dashboardLanguage, "tone")}</span>
@@ -128,9 +141,7 @@ export default function AISettingsPage() {
                   onChange={(e) => setTone(e.target.value as Tone)}
                   disabled={!features.ai_tone_customization}
                   style={{
-                    padding: 10,
-                    borderRadius: 10,
-                    border: "1px solid rgba(0,0,0,0.15)",
+                    ...selectStyle,
                     background: features.ai_tone_customization ? "white" : "#f1f5f9",
                     color: features.ai_tone_customization ? "#111827" : "#94a3b8",
                     cursor: features.ai_tone_customization ? "pointer" : "not-allowed",
@@ -150,46 +161,37 @@ export default function AISettingsPage() {
                 <select
                   value={replyLength}
                   onChange={(e) => setReplyLength(e.target.value as ReplyLength)}
-                  style={{
-                    padding: 10,
-                    borderRadius: 10,
-                    border: "1px solid rgba(0,0,0,0.15)",
-                    background: "white",
-                    color: "#111827",
-                  }}
+                  style={selectStyle}
                 >
                   <option value="concise">Concise</option>
                   <option value="normal">Normal</option>
                   <option value="detailed">Detailed</option>
                 </select>
               </label>
-
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontWeight: 800 }}>{t(dashboardLanguage, "dashboard_language")}</span>
-                <select
-                  value={dashboardLanguage}
-                  onChange={(e) => setDashboardLanguage(e.target.value as DashboardLanguage)}
-                  style={{
-                    padding: 10,
-                    borderRadius: 10,
-                    border: "1px solid rgba(0,0,0,0.15)",
-                    background: "white",
-                    color: "#111827",
-                  }}
-                >
-                  <option value="english">{t(dashboardLanguage, "english")}</option>
-                  <option value="swedish">{t(dashboardLanguage, "swedish")}</option>
-                  <option value="arabic">{t(dashboardLanguage, "arabic")}</option>
-                </select>
-              </label>
             </div>
-
-            <p style={{ marginTop: 10, color: "#374151" }}>
+            <p style={{ marginTop: 10, color: "#374151", fontSize: 13 }}>
               Professional = formal. Friendly = warm. Casual = relaxed.
             </p>
           </div>
 
-          {/* Save */}
+          {/* ─── Dashboard ─── */}
+          <div style={sectionStyle}>
+            <div style={sectionTitleStyle}>Dashboard</div>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontWeight: 800 }}>{t(dashboardLanguage, "dashboard_language")}</span>
+              <select
+                value={dashboardLanguage}
+                onChange={(e) => setDashboardLanguage(e.target.value as DashboardLanguage)}
+                style={selectStyle}
+              >
+                <option value="english">{t(dashboardLanguage, "english")}</option>
+                <option value="swedish">{t(dashboardLanguage, "swedish")}</option>
+                <option value="arabic">{t(dashboardLanguage, "arabic")}</option>
+              </select>
+            </label>
+          </div>
+
+          {/* ─── Save ─── */}
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <button
               onClick={save}

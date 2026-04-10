@@ -12,7 +12,6 @@ type TabKey =
   | "menu"
   | "faqs"
   | "booking"
-  | "business_info"
   | "knowledge";
 
 type HourRow = {
@@ -72,6 +71,15 @@ const areaStyle: React.CSSProperties = {
   resize: "vertical",
 };
 
+const saveBtnStyle: React.CSSProperties = {
+  padding: "10px 16px",
+  borderRadius: 10,
+  border: "1px solid rgba(0,0,0,0.15)",
+  background: "white",
+  cursor: "pointer",
+  fontWeight: 700,
+};
+
 function defaultHours(): HourRow[] {
   return DAY_NAMES.map((_, day) => ({
     day_of_week: day,
@@ -90,41 +98,96 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+function getMenuTabLabel(businessType: string): string {
+  switch (businessType) {
+    case "restaurant":
+      return "Menu";
+    case "barber":
+    case "clinic":
+      return "Services";
+    case "retail":
+      return "Products";
+    default:
+      return "Services";
+  }
+}
+
+const VALID_TABS: TabKey[] = ["profile", "hours", "menu", "faqs", "booking", "knowledge"];
+const TAB_STORAGE_KEY = "sp_business_tab";
+
 export default function BusinessSetupPage() {
   const router = useRouter();
   const BACKEND_URL = useMemo(() => getBackendUrl(), []);
 
+  // Resolve initial tab from URL > localStorage > default
+  const initialTab = useMemo(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlTab = params.get("tab") as TabKey | null;
+      if (urlTab && VALID_TABS.includes(urlTab)) return urlTab;
+      const stored = localStorage.getItem(TAB_STORAGE_KEY) as TabKey | null;
+      if (stored && VALID_TABS.includes(stored)) return stored;
+    }
+    return "profile" as TabKey;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
+  // Profile state
   const [businessName, setBusinessName] = useState("");
   const [niche, setNiche] = useState("generic");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
   const [timezone, setTimezone] = useState("Europe/Stockholm");
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileStatus, setProfileStatus] = useState<string | null>(null);
 
+  // Hours state
   const [hours, setHours] = useState<HourRow[]>(defaultHours());
+  const [hoursSaving, setHoursSaving] = useState(false);
+  const [hoursStatus, setHoursStatus] = useState<string | null>(null);
+
+  // Menu state
   const [menuItems, setMenuItems] = useState<MenuItemRow[]>([]);
-  const [faqs, setFaqs] = useState<FaqRow[]>([]);
   const [deletedMenuIds, setDeletedMenuIds] = useState<string[]>([]);
-  const [deletedFaqIds, setDeletedFaqIds] = useState<string[]>([]);
   const [importingPhoto, setImportingPhoto] = useState(false);
   const [savingImported, setSavingImported] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [importItems, setImportItems] = useState<ImportedMenuItem[]>([]);
+  const [menuSaving, setMenuSaving] = useState(false);
+  const [menuStatus, setMenuStatus] = useState<string | null>(null);
 
+  // FAQs state
+  const [faqs, setFaqs] = useState<FaqRow[]>([]);
+  const [deletedFaqIds, setDeletedFaqIds] = useState<string[]>([]);
+  const [faqsSaving, setFaqsSaving] = useState(false);
+  const [faqsStatus, setFaqsStatus] = useState<string | null>(null);
+
+  // Booking state
   const [bookingEnabled, setBookingEnabled] = useState(true);
   const [requireName, setRequireName] = useState(true);
   const [requirePhone, setRequirePhone] = useState(true);
   const [maxPartySize, setMaxPartySize] = useState("");
+  const [bookingSaving, setBookingSaving] = useState(false);
+  const [bookingStatus, setBookingStatus] = useState<string | null>(null);
 
-  const [businessInfo, setBusinessInfo] = useState("");
-  const [savingBusinessInfo, setSavingBusinessInfo] = useState(false);
-  const [businessInfoStatus, setBusinessInfoStatus] = useState<string | null>(null);
+  function switchTab(tab: TabKey) {
+    setActiveTab(tab);
+    localStorage.setItem(TAB_STORAGE_KEY, tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", tab);
+    window.history.replaceState({}, "", url.toString());
+  }
 
-  const [activeTab, setActiveTab] = useState<TabKey>("profile");
+  const hasMenuItems = useMemo(() => {
+    return menuItems.some((item) => String(item.name || "").trim());
+  }, [menuItems]);
+
+  // Derive business type from niche for conditional UI
+  const businessType = niche;
 
   useEffect(() => {
     let cancelled = false;
@@ -141,7 +204,7 @@ export default function BusinessSetupPage() {
 
       setUserId(user.id);
 
-      const [profileRes, hoursRes, menuRes, faqRes, rulesRes, clientSettingsRes] = await Promise.all([
+      const [profileRes, hoursRes, menuRes, faqRes, rulesRes] = await Promise.all([
         supabase
           .from("business_profiles")
           .select("business_name,niche,phone,address,timezone")
@@ -166,11 +229,6 @@ export default function BusinessSetupPage() {
           .select("booking_enabled,require_name,require_phone,max_party_size")
           .eq("user_id", user.id)
           .maybeSingle(),
-        supabase
-          .from("client_settings")
-          .select("business")
-          .eq("user_id", user.id)
-          .maybeSingle(),
       ]);
 
       if (cancelled) return;
@@ -180,11 +238,6 @@ export default function BusinessSetupPage() {
       if (menuRes.error) console.error(menuRes.error);
       if (faqRes.error) console.error(faqRes.error);
       if (rulesRes.error) console.error(rulesRes.error);
-      if (clientSettingsRes.error) console.error(clientSettingsRes.error);
-
-      if (clientSettingsRes.data) {
-        setBusinessInfo(clientSettingsRes.data.business ?? "");
-      }
 
       if (profileRes.data) {
         setBusinessName(profileRes.data.business_name ?? "");
@@ -255,15 +308,221 @@ export default function BusinessSetupPage() {
     return () => { cancelled = true; };
   }, [router]);
 
-  const hasMenuItems = useMemo(() => {
-    return menuItems.some((item) => String(item.name || "").trim());
-  }, [menuItems]);
+  // --- Per-tab save functions ---
+
+  async function saveProfile() {
+    if (!userId) return;
+    setProfileSaving(true);
+    setProfileStatus(null);
+    try {
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from("business_profiles")
+        .upsert({
+          user_id: userId,
+          business_name: businessName || null,
+          niche: niche || "generic",
+          phone: phone || null,
+          address: address || null,
+          timezone: timezone || "Europe/Stockholm",
+          updated_at: now,
+        }, { onConflict: "user_id" });
+      if (error) throw error;
+      setProfileStatus("Profile saved.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setProfileStatus(`Save failed: ${message}`);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function saveHours() {
+    if (!userId) return;
+    setHoursSaving(true);
+    setHoursStatus(null);
+    try {
+      const now = new Date().toISOString();
+      const hoursPayload = hours.map((row) => ({
+        user_id: userId,
+        day_of_week: row.day_of_week,
+        is_closed: row.is_closed,
+        open_time: row.is_closed ? null : row.open_time || null,
+        close_time: row.is_closed ? null : row.close_time || null,
+        updated_at: now,
+      }));
+      const { error } = await supabase
+        .from("business_hours")
+        .upsert(hoursPayload, { onConflict: "user_id,day_of_week" });
+      if (error) throw error;
+      setHoursStatus("Hours saved.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setHoursStatus(`Save failed: ${message}`);
+    } finally {
+      setHoursSaving(false);
+    }
+  }
+
+  async function saveMenu() {
+    if (!userId) return;
+    setMenuSaving(true);
+    setMenuStatus(null);
+    try {
+      const now = new Date().toISOString();
+      const normalizedMenu = menuItems
+        .map((item) => ({ ...item, name: String(item.name || "").trim() }))
+        .filter((item) => item.name);
+
+      if (deletedMenuIds.length) {
+        const deleteRes = await supabase
+          .from("menu_items")
+          .delete()
+          .eq("user_id", userId)
+          .in("id", deletedMenuIds);
+        if (deleteRes.error) throw deleteRes.error;
+      }
+
+      const menuUpdates = normalizedMenu
+        .filter((item) => item.id)
+        .map((item) => ({
+          id: item.id,
+          user_id: userId,
+          name: item.name,
+          price: item.price.trim() ? Number(item.price) : null,
+          description: item.description || null,
+          category: item.category || null,
+          available: item.available,
+          tags: item.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+          updated_at: now,
+        }));
+
+      const menuInserts = normalizedMenu
+        .filter((item) => !item.id)
+        .map((item) => ({
+          user_id: userId,
+          name: item.name,
+          price: item.price.trim() ? Number(item.price) : null,
+          description: item.description || null,
+          category: item.category || null,
+          available: item.available,
+          tags: item.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+          updated_at: now,
+        }));
+
+      if (menuUpdates.length) {
+        const res = await supabase.from("menu_items").upsert(menuUpdates, { onConflict: "id" });
+        if (res.error) throw res.error;
+      }
+      if (menuInserts.length) {
+        const res = await supabase.from("menu_items").insert(menuInserts);
+        if (res.error) throw res.error;
+      }
+
+      setDeletedMenuIds([]);
+      setMenuStatus(`${getMenuTabLabel(businessType)} saved.`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setMenuStatus(`Save failed: ${message}`);
+    } finally {
+      setMenuSaving(false);
+    }
+  }
+
+  async function saveFaqs() {
+    if (!userId) return;
+    setFaqsSaving(true);
+    setFaqsStatus(null);
+    try {
+      const now = new Date().toISOString();
+      const normalizedFaqs = faqs
+        .map((row) => ({
+          ...row,
+          question: String(row.question || "").trim(),
+          answer: String(row.answer || "").trim(),
+        }))
+        .filter((row) => row.question && row.answer);
+
+      if (deletedFaqIds.length) {
+        const res = await supabase
+          .from("faqs")
+          .delete()
+          .eq("user_id", userId)
+          .in("id", deletedFaqIds);
+        if (res.error) throw res.error;
+      }
+
+      const faqUpdates = normalizedFaqs
+        .filter((row) => row.id)
+        .map((row) => ({
+          id: row.id,
+          user_id: userId,
+          question: row.question,
+          answer: row.answer,
+          updated_at: now,
+        }));
+
+      const faqInserts = normalizedFaqs
+        .filter((row) => !row.id)
+        .map((row) => ({
+          user_id: userId,
+          question: row.question,
+          answer: row.answer,
+          updated_at: now,
+        }));
+
+      if (faqUpdates.length) {
+        const res = await supabase.from("faqs").upsert(faqUpdates, { onConflict: "id" });
+        if (res.error) throw res.error;
+      }
+      if (faqInserts.length) {
+        const res = await supabase.from("faqs").insert(faqInserts);
+        if (res.error) throw res.error;
+      }
+
+      setDeletedFaqIds([]);
+      setFaqsStatus("FAQs saved.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setFaqsStatus(`Save failed: ${message}`);
+    } finally {
+      setFaqsSaving(false);
+    }
+  }
+
+  async function saveBookingRules() {
+    if (!userId) return;
+    setBookingSaving(true);
+    setBookingStatus(null);
+    try {
+      const now = new Date().toISOString();
+      const { error } = await supabase
+        .from("booking_rules")
+        .upsert({
+          user_id: userId,
+          booking_enabled: bookingEnabled,
+          require_name: requireName,
+          require_phone: requirePhone,
+          max_party_size: maxPartySize.trim() ? Number(maxPartySize) : null,
+          updated_at: now,
+        }, { onConflict: "user_id" });
+      if (error) throw error;
+      setBookingStatus("Booking rules saved.");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      setBookingStatus(`Save failed: ${message}`);
+    } finally {
+      setBookingSaving(false);
+    }
+  }
+
+  // --- Menu photo import ---
 
   async function importMenuFromPhoto(file: File) {
     if (!userId || !file) return;
     setImportError(null);
 
-    const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+    const MAX_FILE_SIZE = 2 * 1024 * 1024;
     if (file.size > MAX_FILE_SIZE) {
       setImportError("Image must be under 2MB. Please compress it first.");
       return;
@@ -287,28 +546,20 @@ export default function BusinessSetupPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          userId,
-          imageDataUrl,
-        }),
+        body: JSON.stringify({ userId, imageDataUrl }),
       });
 
       const data = await resp.json().catch(() => null);
       if (!resp.ok) {
-        const errorText = data?.error || "Could not extract menu. Try another photo.";
-        throw new Error(errorText);
+        throw new Error(data?.error || "Could not extract menu. Try another photo.");
       }
 
       const items: Record<string, unknown>[] = Array.isArray(data?.items) ? data.items : [];
       const nextItems: ImportedMenuItem[] = items.map((item: Record<string, unknown>) => {
-        const value = item && typeof item === "object" ? item : {};
-        const safe = value as Record<string, unknown>;
+        const safe = (item && typeof item === "object" ? item : {}) as Record<string, unknown>;
         return {
           name: String(safe.name || ""),
-          price:
-            safe.price === null || safe.price === undefined || safe.price === ""
-              ? ""
-              : String(safe.price),
+          price: safe.price === null || safe.price === undefined || safe.price === "" ? "" : String(safe.price),
           description: String(safe.description || ""),
           category: String(safe.category || ""),
         };
@@ -357,10 +608,7 @@ export default function BusinessSetupPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          userId,
-          items: payloadItems,
-        }),
+        body: JSON.stringify({ userId, items: payloadItems }),
       });
 
       const data = await resp.json().catch(() => null);
@@ -370,21 +618,15 @@ export default function BusinessSetupPage() {
 
       const inserted: Record<string, unknown>[] = Array.isArray(data?.inserted) ? data.inserted : [];
       const insertedRows: MenuItemRow[] = inserted.map((row: Record<string, unknown>) => {
-        const value = row && typeof row === "object" ? row : {};
-        const safe = value as Record<string, unknown>;
+        const safe = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
         return {
           id: String(safe.id || ""),
           name: String(safe.name || ""),
-          price:
-            safe.price === null || safe.price === undefined || safe.price === ""
-              ? ""
-              : String(safe.price),
+          price: safe.price === null || safe.price === undefined || safe.price === "" ? "" : String(safe.price),
           description: String(safe.description || ""),
           category: String(safe.category || ""),
           available: Boolean(safe.available ?? true),
-          tags: Array.isArray(safe.tags)
-            ? safe.tags.map((tag) => String(tag)).join(", ")
-            : "",
+          tags: Array.isArray(safe.tags) ? safe.tags.map((tag) => String(tag)).join(", ") : "",
         };
       });
 
@@ -392,7 +634,7 @@ export default function BusinessSetupPage() {
         setMenuItems((prev) => [...insertedRows, ...prev]);
       }
       setImportItems([]);
-      setStatus(`Imported ${insertedRows.length || payloadItems.length} item(s).`);
+      setMenuStatus(`Imported ${insertedRows.length || payloadItems.length} item(s).`);
     } catch (err: unknown) {
       console.error(err);
       const message = err instanceof Error ? err.message : "Failed to save imported items";
@@ -402,218 +644,30 @@ export default function BusinessSetupPage() {
     }
   }
 
-  async function saveBusinessInfo() {
-    if (!userId) return;
-    setSavingBusinessInfo(true);
-    setBusinessInfoStatus(null);
-    try {
-      const { error } = await supabase
-        .from("client_settings")
-        .upsert(
-          {
-            user_id: userId,
-            business: businessInfo,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" }
-        );
-      if (error) throw error;
-      setBusinessInfoStatus("Saved business info.");
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setBusinessInfoStatus(`Save failed: ${message}`);
-    } finally {
-      setSavingBusinessInfo(false);
-    }
-  }
-
-  async function saveAll() {
-    if (!userId) return;
-
-    setSaving(true);
-    setStatus(null);
-
-    try {
-      const now = new Date().toISOString();
-
-      const profilePayload = {
-        user_id: userId,
-        business_name: businessName || null,
-        niche: niche || "generic",
-        phone: phone || null,
-        address: address || null,
-        timezone: timezone || "Europe/Stockholm",
-        updated_at: now,
-      };
-
-      const profileUpsert = await supabase
-        .from("business_profiles")
-        .upsert(profilePayload, { onConflict: "user_id" });
-      if (profileUpsert.error) throw profileUpsert.error;
-
-      const hoursPayload = hours.map((row) => ({
-        user_id: userId,
-        day_of_week: row.day_of_week,
-        is_closed: row.is_closed,
-        open_time: row.is_closed ? null : row.open_time || null,
-        close_time: row.is_closed ? null : row.close_time || null,
-        updated_at: now,
-      }));
-
-      const hoursUpsert = await supabase
-        .from("business_hours")
-        .upsert(hoursPayload, { onConflict: "user_id,day_of_week" });
-      if (hoursUpsert.error) throw hoursUpsert.error;
-
-      const normalizedMenu = menuItems
-        .map((item) => ({ ...item, name: String(item.name || "").trim() }))
-        .filter((item) => item.name);
-
-      if (deletedMenuIds.length) {
-        const deleteMenuRes = await supabase
-          .from("menu_items")
-          .delete()
-          .eq("user_id", userId)
-          .in("id", deletedMenuIds);
-        if (deleteMenuRes.error) throw deleteMenuRes.error;
-      }
-
-      const menuUpdates = normalizedMenu
-        .filter((item) => item.id)
-        .map((item) => ({
-          id: item.id,
-          user_id: userId,
-          name: item.name,
-          price: item.price.trim() ? Number(item.price) : null,
-          description: item.description || null,
-          category: item.category || null,
-          available: item.available,
-          tags: item.tags
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean),
-          updated_at: now,
-        }));
-
-      const menuInserts = normalizedMenu
-        .filter((item) => !item.id)
-        .map((item) => ({
-          user_id: userId,
-          name: item.name,
-          price: item.price.trim() ? Number(item.price) : null,
-          description: item.description || null,
-          category: item.category || null,
-          available: item.available,
-          tags: item.tags
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean),
-          updated_at: now,
-        }));
-
-      if (menuUpdates.length) {
-        const menuUpdateRes = await supabase
-          .from("menu_items")
-          .upsert(menuUpdates, { onConflict: "id" });
-        if (menuUpdateRes.error) throw menuUpdateRes.error;
-      }
-
-      if (menuInserts.length) {
-        const menuInsertRes = await supabase.from("menu_items").insert(menuInserts);
-        if (menuInsertRes.error) throw menuInsertRes.error;
-      }
-
-      const normalizedFaqs = faqs
-        .map((row) => ({
-          ...row,
-          question: String(row.question || "").trim(),
-          answer: String(row.answer || "").trim(),
-        }))
-        .filter((row) => row.question && row.answer);
-
-      if (deletedFaqIds.length) {
-        const deleteFaqRes = await supabase
-          .from("faqs")
-          .delete()
-          .eq("user_id", userId)
-          .in("id", deletedFaqIds);
-        if (deleteFaqRes.error) throw deleteFaqRes.error;
-      }
-
-      const faqUpdates = normalizedFaqs
-        .filter((row) => row.id)
-        .map((row) => ({
-          id: row.id,
-          user_id: userId,
-          question: row.question,
-          answer: row.answer,
-          updated_at: now,
-        }));
-
-      const faqInserts = normalizedFaqs
-        .filter((row) => !row.id)
-        .map((row) => ({
-          user_id: userId,
-          question: row.question,
-          answer: row.answer,
-          updated_at: now,
-        }));
-
-      if (faqUpdates.length) {
-        const faqUpdateRes = await supabase.from("faqs").upsert(faqUpdates, {
-          onConflict: "id",
-        });
-        if (faqUpdateRes.error) throw faqUpdateRes.error;
-      }
-
-      if (faqInserts.length) {
-        const faqInsertRes = await supabase.from("faqs").insert(faqInserts);
-        if (faqInsertRes.error) throw faqInsertRes.error;
-      }
-
-      const bookingPayload = {
-        user_id: userId,
-        booking_enabled: bookingEnabled,
-        require_name: requireName,
-        require_phone: requirePhone,
-        max_party_size: maxPartySize.trim() ? Number(maxPartySize) : null,
-        updated_at: now,
-      };
-
-      const bookingUpsert = await supabase
-        .from("booking_rules")
-        .upsert(bookingPayload, { onConflict: "user_id" });
-      if (bookingUpsert.error) throw bookingUpsert.error;
-
-      setDeletedMenuIds([]);
-      setDeletedFaqIds([]);
-      setStatus("Saved business setup.");
-      router.refresh();
-    } catch (err: unknown) {
-      console.error(err);
-      const message = err instanceof Error ? err.message : "Unknown error";
-      setStatus(`Save failed: ${message}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   if (loading) {
     return (
-      <DashboardShell title="Business Setup" subtitle="Structured business knowledge">
+      <DashboardShell title="Business Setup" subtitle="Manage your business configuration">
         <div style={{ maxWidth: 1100 }}>
-        <p>Loading...</p>
+          <p>Loading...</p>
         </div>
       </DashboardShell>
     );
   }
 
+  const menuTabLabel = getMenuTabLabel(businessType);
+
+  const tabs: Array<{ key: TabKey; label: string }> = [
+    { key: "profile", label: "Profile" },
+    { key: "hours", label: "Hours" },
+    { key: "menu", label: menuTabLabel },
+    { key: "booking", label: "Booking Rules" },
+    { key: "knowledge", label: "Knowledge Base" },
+    { key: "faqs", label: "FAQs" },
+  ];
+
   return (
-    <DashboardShell title="Business Setup" subtitle="Structured business knowledge">
+    <DashboardShell title="Business Setup" subtitle="Manage your business configuration">
       <div style={{ maxWidth: 1100, color: "#111827" }}>
-      <p style={{ marginTop: 8, color: "#4b5563" }}>
-        Structured data is used by AI before legacy business text.
-      </p>
 
       <div
         role="tablist"
@@ -624,26 +678,17 @@ export default function BusinessSetupPage() {
           gap: 6,
           borderBottom: "1px solid rgba(0,0,0,0.1)",
           paddingBottom: 0,
+          overflowX: "auto",
         }}
       >
-        {(
-          [
-            { key: "profile", label: "Profile" },
-            { key: "hours", label: "Hours" },
-            { key: "menu", label: "Menu" },
-            { key: "faqs", label: "FAQs" },
-            { key: "booking", label: "Booking Rules" },
-            { key: "business_info", label: "Business Info" },
-            { key: "knowledge", label: "Knowledge Base" },
-          ] as Array<{ key: TabKey; label: string }>
-        ).map((tab) => {
+        {tabs.map((tab) => {
           const active = activeTab === tab.key;
           return (
             <button
               key={tab.key}
               role="tab"
               aria-selected={active}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => switchTab(tab.key)}
               style={{
                 padding: "8px 14px",
                 borderRadius: "10px 10px 0 0",
@@ -655,6 +700,7 @@ export default function BusinessSetupPage() {
                 fontWeight: 700,
                 cursor: "pointer",
                 fontSize: 13,
+                whiteSpace: "nowrap",
               }}
             >
               {tab.label}
@@ -664,484 +710,309 @@ export default function BusinessSetupPage() {
       </div>
 
       <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+        {/* ─── Profile Tab ─── */}
         {activeTab === "profile" && (
-        <section
-          style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-        >
-          <h2 style={{ marginTop: 0 }}>Profile</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Business name</span>
-              <input
-                style={fieldStyle}
-                placeholder="Type business name"
-                value={businessName}
-                onChange={(e) => setBusinessName(e.target.value)}
-              />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Niche</span>
-              <input
-                style={fieldStyle}
-                placeholder="Type niche (example: cafe, salon)"
-                value={niche}
-                onChange={(e) => setNiche(e.target.value)}
-              />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Phone</span>
-              <input
-                style={fieldStyle}
-                placeholder="Type phone number"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-            </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span>Timezone</span>
-              <input
-                style={fieldStyle}
-                placeholder="Type timezone (example: Europe/Stockholm)"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-              />
-            </label>
-          </div>
-          <label style={{ display: "grid", gap: 6, marginTop: 10 }}>
-            <span>Address</span>
-            <input
-              style={fieldStyle}
-              placeholder="Type business address"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-            />
-          </label>
-        </section>
-        )}
-
-        {activeTab === "hours" && (
-        <section
-          style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-        >
-          <h2 style={{ marginTop: 0 }}>Hours</h2>
-          <div style={{ display: "grid", gap: 8 }}>
-            {hours.map((row, idx) => (
-              <div
-                key={row.day_of_week}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "140px 120px 1fr 1fr",
-                  gap: 10,
-                  alignItems: "center",
-                }}
-              >
-                <strong>{DAY_NAMES[row.day_of_week]}</strong>
-                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={row.is_closed}
-                    onChange={(e) => {
-                      const next = [...hours];
-                      next[idx] = { ...next[idx], is_closed: e.target.checked };
-                      setHours(next);
-                    }}
-                  />
-                  Closed
-                </label>
-                <input
-                  type="time"
-                  style={fieldStyle}
-                  value={row.open_time}
-                  disabled={row.is_closed}
-                  onChange={(e) => {
-                    const next = [...hours];
-                    next[idx] = { ...next[idx], open_time: e.target.value };
-                    setHours(next);
-                  }}
-                />
-                <input
-                  type="time"
-                  style={fieldStyle}
-                  value={row.close_time}
-                  disabled={row.is_closed}
-                  onChange={(e) => {
-                    const next = [...hours];
-                    next[idx] = { ...next[idx], close_time: e.target.value };
-                    setHours(next);
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-        </section>
-        )}
-
-        {activeTab === "menu" && (
-        <section
-          style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-        >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-            <h2 style={{ marginTop: 0 }}>Menu</h2>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <label
-                style={{
-                  ...fieldStyle,
-                  cursor: importingPhoto ? "not-allowed" : "pointer",
-                  width: "auto",
-                  fontWeight: 700,
-                  background: importingPhoto ? "#f3f4f6" : "white",
-                }}
-              >
-                {importingPhoto ? "Importing..." : "Import from photo"}
-                <input
-                  type="file"
-                  accept="image/*"
-                  disabled={importingPhoto}
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) void importMenuFromPhoto(file);
-                    e.currentTarget.value = "";
-                  }}
-                />
-              </label>
-
-              <button
-                onClick={() =>
-                  setMenuItems((prev) => [
-                    { name: "", price: "", description: "", category: "", available: true, tags: "" },
-                    ...prev,
-                  ])
-                }
-              >
-                Add item
-              </button>
-            </div>
-          </div>
-
-          {importError ? (
-            <p style={{ marginTop: 8, color: "#b91c1c", fontWeight: 700 }}>{importError}</p>
-          ) : null}
-
-          {importItems.length > 0 ? (
-            <div
-              style={{
-                marginTop: 12,
-                border: "1px solid #bfdbfe",
-                background: "#eff6ff",
-                borderRadius: 10,
-                padding: 10,
-              }}
-            >
-              <div style={{ fontWeight: 800, marginBottom: 8 }}>
-                Imported preview (edit before saving)
-              </div>
-              <div style={{ display: "grid", gap: 8 }}>
-                {importItems.map((row, idx) => (
-                  <div
-                    key={`import-row-${idx}`}
-                    style={{
-                      border: "1px solid rgba(0,0,0,0.1)",
-                      borderRadius: 8,
-                      padding: 8,
-                      background: "white",
-                      display: "grid",
-                      gridTemplateColumns: "2fr 1fr 2fr 1fr auto",
-                      gap: 8,
-                      alignItems: "center",
-                    }}
-                  >
-                    <input
-                      style={fieldStyle}
-                      placeholder="Name"
-                      value={row.name}
-                      onChange={(e) => {
-                        const next = [...importItems];
-                        next[idx] = { ...next[idx], name: e.target.value };
-                        setImportItems(next);
-                      }}
-                    />
-                    <input
-                      style={fieldStyle}
-                      placeholder="Price"
-                      value={row.price}
-                      onChange={(e) => {
-                        const next = [...importItems];
-                        next[idx] = { ...next[idx], price: e.target.value };
-                        setImportItems(next);
-                      }}
-                    />
-                    <input
-                      style={fieldStyle}
-                      placeholder="Description"
-                      value={row.description}
-                      onChange={(e) => {
-                        const next = [...importItems];
-                        next[idx] = { ...next[idx], description: e.target.value };
-                        setImportItems(next);
-                      }}
-                    />
-                    <input
-                      style={fieldStyle}
-                      placeholder="Category"
-                      value={row.category}
-                      onChange={(e) => {
-                        const next = [...importItems];
-                        next[idx] = { ...next[idx], category: e.target.value };
-                        setImportItems(next);
-                      }}
-                    />
-                    <button
-                      onClick={() => {
-                        const next = importItems.filter((_, rowIdx) => rowIdx !== idx);
-                        setImportItems(next);
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <div style={{ marginTop: 10 }}>
-                <button onClick={saveImportedItems} disabled={savingImported}>
-                  {savingImported ? "Saving..." : "Save items"}
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          <div style={{ display: "grid", gap: 8 }}>
-            {menuItems.map((item, idx) => (
-              <div
-                key={item.id || `new-menu-${idx}`}
-                style={{
-                  border: "1px solid rgba(0,0,0,0.1)",
-                  borderRadius: 10,
-                  padding: 10,
-                  display: "grid",
-                  gridTemplateColumns: "2fr 1fr 1fr",
-                  gap: 8,
-                }}
-              >
-                <input
-                  style={fieldStyle}
-                  placeholder="Name"
-                  value={item.name}
-                  onChange={(e) => {
-                    const next = [...menuItems];
-                    next[idx] = { ...next[idx], name: e.target.value };
-                    setMenuItems(next);
-                  }}
-                />
-                <input
-                  style={fieldStyle}
-                  placeholder="Price"
-                  value={item.price}
-                  onChange={(e) => {
-                    const next = [...menuItems];
-                    next[idx] = { ...next[idx], price: e.target.value };
-                    setMenuItems(next);
-                  }}
-                />
-                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input
-                    type="checkbox"
-                    checked={item.available}
-                    onChange={(e) => {
-                      const next = [...menuItems];
-                      next[idx] = { ...next[idx], available: e.target.checked };
-                      setMenuItems(next);
-                    }}
-                  />
-                  Available
-                </label>
-                <input
-                  style={fieldStyle}
-                  placeholder="Category"
-                  value={item.category}
-                  onChange={(e) => {
-                    const next = [...menuItems];
-                    next[idx] = { ...next[idx], category: e.target.value };
-                    setMenuItems(next);
-                  }}
-                />
-                <input
-                  style={fieldStyle}
-                  placeholder="Tags (comma separated)"
-                  value={item.tags}
-                  onChange={(e) => {
-                    const next = [...menuItems];
-                    next[idx] = { ...next[idx], tags: e.target.value };
-                    setMenuItems(next);
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const target = menuItems[idx];
-                    if (target?.id) {
-                      setDeletedMenuIds((prev) => [...prev, target.id as string]);
-                    }
-                    const next = menuItems.filter((_, rowIdx) => rowIdx !== idx);
-                    setMenuItems(next);
-                  }}
-                >
-                  Remove
-                </button>
-                <textarea
-                  style={{ ...areaStyle, gridColumn: "1 / span 3" }}
-                  placeholder="Description"
-                  rows={2}
-                  value={item.description}
-                  onChange={(e) => {
-                    const next = [...menuItems];
-                    next[idx] = { ...next[idx], description: e.target.value };
-                    setMenuItems(next);
-                  }}
-                />
-              </div>
-            ))}
-            {!hasMenuItems && <p style={{ color: "#6b7280" }}>No menu items yet.</p>}
-          </div>
-        </section>
-        )}
-
-        {activeTab === "faqs" && (
-        <section
-          style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-        >
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <h2 style={{ marginTop: 0 }}>FAQs</h2>
-            <button onClick={() => setFaqs((prev) => [{ question: "", answer: "" }, ...prev])}>
-              Add FAQ
-            </button>
-          </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            {faqs.map((row, idx) => (
-              <div
-                key={row.id || `new-faq-${idx}`}
-                style={{ border: "1px solid rgba(0,0,0,0.1)", borderRadius: 10, padding: 10 }}
-              >
-                <input
-                  style={fieldStyle}
-                  placeholder="Question"
-                  value={row.question}
-                  onChange={(e) => {
-                    const next = [...faqs];
-                    next[idx] = { ...next[idx], question: e.target.value };
-                    setFaqs(next);
-                  }}
-                />
-                <textarea
-                  style={{ ...areaStyle, width: "100%", marginTop: 8 }}
-                  placeholder="Answer"
-                  rows={3}
-                  value={row.answer}
-                  onChange={(e) => {
-                    const next = [...faqs];
-                    next[idx] = { ...next[idx], answer: e.target.value };
-                    setFaqs(next);
-                  }}
-                />
-                <button
-                  onClick={() => {
-                    const target = faqs[idx];
-                    if (target?.id) {
-                      setDeletedFaqIds((prev) => [...prev, target.id as string]);
-                    }
-                    const next = faqs.filter((_, rowIdx) => rowIdx !== idx);
-                    setFaqs(next);
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-            {faqs.length === 0 && <p style={{ color: "#6b7280" }}>No FAQs yet.</p>}
-          </div>
-        </section>
-        )}
-
-        {activeTab === "booking" && (
-        <section
-          style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-        >
-          <h2 style={{ marginTop: 0 }}>Booking Rules</h2>
-          <div style={{ display: "grid", gap: 8 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={bookingEnabled}
-                onChange={(e) => setBookingEnabled(e.target.checked)}
-              />
-              Booking enabled
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={requireName}
-                onChange={(e) => setRequireName(e.target.checked)}
-              />
-              Require customer name
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="checkbox"
-                checked={requirePhone}
-                onChange={(e) => setRequirePhone(e.target.checked)}
-              />
-              Require customer phone
-            </label>
-            <label style={{ display: "grid", gap: 6, maxWidth: 260 }}>
-              <span>Max party size (optional)</span>
-              <input
-                type="number"
-                style={fieldStyle}
-                value={maxPartySize}
-                onChange={(e) => setMaxPartySize(e.target.value)}
-              />
-            </label>
-          </div>
-        </section>
-        )}
-
-        {activeTab === "business_info" && (
           <section
             style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
           >
-            <h2 style={{ marginTop: 0 }}>Business Info</h2>
-            <p style={{ marginTop: 0, color: "#6b7280", fontSize: 13 }}>
-              Free-text business information. The AI is only allowed to use what you put here. Structured data above is used first.
-            </p>
-            <textarea
-              value={businessInfo}
-              onChange={(e) => setBusinessInfo(e.target.value)}
-              rows={12}
-              style={{ ...areaStyle, minHeight: 220 }}
-              placeholder="Paste business info: hours, address, services, booking rules, policies, FAQs…"
-            />
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
-              <button
-                onClick={saveBusinessInfo}
-                disabled={savingBusinessInfo}
-                style={{
-                  padding: "10px 16px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(0,0,0,0.15)",
-                  background: savingBusinessInfo ? "#e5e7eb" : "white",
-                  cursor: savingBusinessInfo ? "not-allowed" : "pointer",
-                  fontWeight: 700,
-                }}
-              >
-                {savingBusinessInfo ? "Saving..." : "Save business info"}
+            <h2 style={{ marginTop: 0 }}>Profile</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Business name</span>
+                <input
+                  style={fieldStyle}
+                  placeholder="Type business name"
+                  value={businessName}
+                  onChange={(e) => setBusinessName(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Business type</span>
+                <select
+                  style={fieldStyle}
+                  value={niche}
+                  onChange={(e) => setNiche(e.target.value)}
+                >
+                  <option value="restaurant">Restaurant</option>
+                  <option value="barber">Barber</option>
+                  <option value="clinic">Clinic</option>
+                  <option value="retail">Retail</option>
+                  <option value="other">Other</option>
+                  <option value="generic">Generic</option>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Phone</span>
+                <input
+                  style={fieldStyle}
+                  placeholder="Type phone number"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span>Timezone</span>
+                <input
+                  style={fieldStyle}
+                  placeholder="Type timezone (example: Europe/Stockholm)"
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                />
+              </label>
+            </div>
+            <label style={{ display: "grid", gap: 6, marginTop: 10 }}>
+              <span>Address</span>
+              <input
+                style={fieldStyle}
+                placeholder="Type business address"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+              />
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+              <button onClick={saveProfile} disabled={profileSaving} style={{ ...saveBtnStyle, background: profileSaving ? "#e5e7eb" : "white" }}>
+                {profileSaving ? "Saving..." : "Save profile"}
               </button>
-              {businessInfoStatus && (
-                <span style={{ fontWeight: 600 }}>{businessInfoStatus}</span>
-              )}
+              {profileStatus && <span style={{ fontWeight: 600 }}>{profileStatus}</span>}
             </div>
           </section>
         )}
 
+        {/* ─── Hours Tab ─── */}
+        {activeTab === "hours" && (
+          <section
+            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
+          >
+            <h2 style={{ marginTop: 0 }}>Opening Hours</h2>
+            <div style={{ display: "grid", gap: 8 }}>
+              {hours.map((row, idx) => (
+                <div
+                  key={row.day_of_week}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "140px 120px 1fr 1fr",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <strong>{DAY_NAMES[row.day_of_week]}</strong>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={row.is_closed}
+                      onChange={(e) => {
+                        const next = [...hours];
+                        next[idx] = { ...next[idx], is_closed: e.target.checked };
+                        setHours(next);
+                      }}
+                    />
+                    Closed
+                  </label>
+                  <input
+                    type="time"
+                    style={fieldStyle}
+                    value={row.open_time}
+                    disabled={row.is_closed}
+                    onChange={(e) => {
+                      const next = [...hours];
+                      next[idx] = { ...next[idx], open_time: e.target.value };
+                      setHours(next);
+                    }}
+                  />
+                  <input
+                    type="time"
+                    style={fieldStyle}
+                    value={row.close_time}
+                    disabled={row.is_closed}
+                    onChange={(e) => {
+                      const next = [...hours];
+                      next[idx] = { ...next[idx], close_time: e.target.value };
+                      setHours(next);
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+              <button onClick={saveHours} disabled={hoursSaving} style={{ ...saveBtnStyle, background: hoursSaving ? "#e5e7eb" : "white" }}>
+                {hoursSaving ? "Saving..." : "Save hours"}
+              </button>
+              {hoursStatus && <span style={{ fontWeight: 600 }}>{hoursStatus}</span>}
+            </div>
+          </section>
+        )}
+
+        {/* ─── Menu / Services / Products Tab ─── */}
+        {activeTab === "menu" && (
+          <section
+            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <h2 style={{ marginTop: 0 }}>{menuTabLabel}</h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <label
+                  style={{
+                    ...fieldStyle,
+                    cursor: importingPhoto ? "not-allowed" : "pointer",
+                    width: "auto",
+                    fontWeight: 700,
+                    background: importingPhoto ? "#f3f4f6" : "white",
+                  }}
+                >
+                  {importingPhoto ? "Importing..." : "Import from photo"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    disabled={importingPhoto}
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void importMenuFromPhoto(file);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+
+                <button
+                  onClick={() =>
+                    setMenuItems((prev) => [
+                      { name: "", price: "", description: "", category: "", available: true, tags: "" },
+                      ...prev,
+                    ])
+                  }
+                >
+                  Add item
+                </button>
+              </div>
+            </div>
+
+            {importError ? (
+              <p style={{ marginTop: 8, color: "#b91c1c", fontWeight: 700 }}>{importError}</p>
+            ) : null}
+
+            {importItems.length > 0 ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  border: "1px solid #bfdbfe",
+                  background: "#eff6ff",
+                  borderRadius: 10,
+                  padding: 10,
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                  Imported preview (edit before saving)
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {importItems.map((row, idx) => (
+                    <div
+                      key={`import-row-${idx}`}
+                      style={{
+                        border: "1px solid rgba(0,0,0,0.1)",
+                        borderRadius: 8,
+                        padding: 8,
+                        background: "white",
+                        display: "grid",
+                        gridTemplateColumns: "2fr 1fr 2fr 1fr auto",
+                        gap: 8,
+                        alignItems: "center",
+                      }}
+                    >
+                      <input style={fieldStyle} placeholder="Name" value={row.name} onChange={(e) => { const next = [...importItems]; next[idx] = { ...next[idx], name: e.target.value }; setImportItems(next); }} />
+                      <input style={fieldStyle} placeholder="Price" value={row.price} onChange={(e) => { const next = [...importItems]; next[idx] = { ...next[idx], price: e.target.value }; setImportItems(next); }} />
+                      <input style={fieldStyle} placeholder="Description" value={row.description} onChange={(e) => { const next = [...importItems]; next[idx] = { ...next[idx], description: e.target.value }; setImportItems(next); }} />
+                      <input style={fieldStyle} placeholder="Category" value={row.category} onChange={(e) => { const next = [...importItems]; next[idx] = { ...next[idx], category: e.target.value }; setImportItems(next); }} />
+                      <button onClick={() => setImportItems(importItems.filter((_, rowIdx) => rowIdx !== idx))}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <button onClick={saveImportedItems} disabled={savingImported}>
+                    {savingImported ? "Saving..." : "Save items"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div style={{ display: "grid", gap: 8 }}>
+              {menuItems.map((item, idx) => (
+                <div
+                  key={item.id || `new-menu-${idx}`}
+                  style={{
+                    border: "1px solid rgba(0,0,0,0.1)",
+                    borderRadius: 10,
+                    padding: 10,
+                    display: "grid",
+                    gridTemplateColumns: "2fr 1fr 1fr",
+                    gap: 8,
+                  }}
+                >
+                  <input style={fieldStyle} placeholder="Name" value={item.name} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], name: e.target.value }; setMenuItems(next); }} />
+                  <input style={fieldStyle} placeholder="Price" value={item.price} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], price: e.target.value }; setMenuItems(next); }} />
+                  <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input type="checkbox" checked={item.available} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], available: e.target.checked }; setMenuItems(next); }} />
+                    Available
+                  </label>
+                  <input style={fieldStyle} placeholder="Category" value={item.category} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], category: e.target.value }; setMenuItems(next); }} />
+                  <input style={fieldStyle} placeholder="Tags (comma separated)" value={item.tags} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], tags: e.target.value }; setMenuItems(next); }} />
+                  <button onClick={() => { const target = menuItems[idx]; if (target?.id) setDeletedMenuIds((prev) => [...prev, target.id as string]); setMenuItems(menuItems.filter((_, rowIdx) => rowIdx !== idx)); }}>Remove</button>
+                  <textarea
+                    style={{ ...areaStyle, gridColumn: "1 / span 3" }}
+                    placeholder="Description"
+                    rows={2}
+                    value={item.description}
+                    onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], description: e.target.value }; setMenuItems(next); }}
+                  />
+                </div>
+              ))}
+              {!hasMenuItems && <p style={{ color: "#6b7280" }}>No items yet.</p>}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+              <button onClick={saveMenu} disabled={menuSaving} style={{ ...saveBtnStyle, background: menuSaving ? "#e5e7eb" : "white" }}>
+                {menuSaving ? "Saving..." : `Save ${menuTabLabel.toLowerCase()}`}
+              </button>
+              {menuStatus && <span style={{ fontWeight: 600 }}>{menuStatus}</span>}
+            </div>
+          </section>
+        )}
+
+        {/* ─── Booking Rules Tab ─── */}
+        {activeTab === "booking" && (
+          <section
+            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
+          >
+            <h2 style={{ marginTop: 0 }}>Booking Rules</h2>
+            <div style={{ display: "grid", gap: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={bookingEnabled} onChange={(e) => setBookingEnabled(e.target.checked)} />
+                Booking enabled
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={requireName} onChange={(e) => setRequireName(e.target.checked)} />
+                Require customer name
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={requirePhone} onChange={(e) => setRequirePhone(e.target.checked)} />
+                Require customer phone
+              </label>
+              {businessType === "restaurant" && (
+                <label style={{ display: "grid", gap: 6, maxWidth: 260 }}>
+                  <span>Max party size (optional)</span>
+                  <input type="number" style={fieldStyle} value={maxPartySize} onChange={(e) => setMaxPartySize(e.target.value)} />
+                </label>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+              <button onClick={saveBookingRules} disabled={bookingSaving} style={{ ...saveBtnStyle, background: bookingSaving ? "#e5e7eb" : "white" }}>
+                {bookingSaving ? "Saving..." : "Save booking rules"}
+              </button>
+              {bookingStatus && <span style={{ fontWeight: 600 }}>{bookingStatus}</span>}
+            </div>
+          </section>
+        )}
+
+        {/* ─── Knowledge Base Tab ─── */}
         {activeTab === "knowledge" && (
           <section
             style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
@@ -1153,27 +1024,61 @@ export default function BusinessSetupPage() {
             <KnowledgeBaseSection />
           </section>
         )}
-      </div>
 
-      {activeTab !== "business_info" && activeTab !== "knowledge" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
-          <button
-            onClick={saveAll}
-            disabled={saving}
-            style={{
-              padding: "10px 16px",
-              borderRadius: 10,
-              border: "1px solid rgba(0,0,0,0.15)",
-              background: saving ? "#e5e7eb" : "white",
-              cursor: saving ? "not-allowed" : "pointer",
-              fontWeight: 700,
-            }}
+        {/* ─── FAQs Tab ─── */}
+        {activeTab === "faqs" && (
+          <section
+            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
           >
-            {saving ? "Saving..." : "Save all"}
-          </button>
-          {status && <span style={{ fontWeight: 600 }}>{status}</span>}
-        </div>
-      )}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h2 style={{ marginTop: 0 }}>FAQs</h2>
+              <button onClick={() => setFaqs((prev) => [{ question: "", answer: "" }, ...prev])}>
+                Add FAQ
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: 8 }}>
+              {faqs.map((row, idx) => (
+                <div
+                  key={row.id || `new-faq-${idx}`}
+                  style={{ border: "1px solid rgba(0,0,0,0.1)", borderRadius: 10, padding: 10 }}
+                >
+                  <input
+                    style={fieldStyle}
+                    placeholder="Question"
+                    value={row.question}
+                    onChange={(e) => { const next = [...faqs]; next[idx] = { ...next[idx], question: e.target.value }; setFaqs(next); }}
+                  />
+                  <textarea
+                    style={{ ...areaStyle, width: "100%", marginTop: 8 }}
+                    placeholder="Answer"
+                    rows={3}
+                    value={row.answer}
+                    onChange={(e) => { const next = [...faqs]; next[idx] = { ...next[idx], answer: e.target.value }; setFaqs(next); }}
+                  />
+                  <button
+                    onClick={() => {
+                      const target = faqs[idx];
+                      if (target?.id) setDeletedFaqIds((prev) => [...prev, target.id as string]);
+                      setFaqs(faqs.filter((_, rowIdx) => rowIdx !== idx));
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+              {faqs.length === 0 && <p style={{ color: "#6b7280" }}>No FAQs yet.</p>}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+              <button onClick={saveFaqs} disabled={faqsSaving} style={{ ...saveBtnStyle, background: faqsSaving ? "#e5e7eb" : "white" }}>
+                {faqsSaving ? "Saving..." : "Save FAQs"}
+              </button>
+              {faqsStatus && <span style={{ fontWeight: 600 }}>{faqsStatus}</span>}
+            </div>
+          </section>
+        )}
+      </div>
       </div>
     </DashboardShell>
   );
