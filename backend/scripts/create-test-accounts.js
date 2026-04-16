@@ -33,7 +33,7 @@ const TEST_ACCOUNTS = [
     name: "Test Starter Business",
     plan: "starter",
     ai_model: "gpt-4o-mini",
-    max_messages: 1000,
+
     max_knowledge: 30,
     max_whatsapp_numbers: 1,
   },
@@ -43,7 +43,7 @@ const TEST_ACCOUNTS = [
     name: "Test Pro Business",
     plan: "pro",
     ai_model: "gpt-4o",
-    max_messages: 3000,
+
     max_knowledge: 75,
     max_whatsapp_numbers: 3,
   },
@@ -53,7 +53,7 @@ const TEST_ACCOUNTS = [
     name: "Test Business Enterprise",
     plan: "business",
     ai_model: "gpt-4o",
-    max_messages: 10000,
+
     max_knowledge: -1,
     max_whatsapp_numbers: 5,
   },
@@ -106,7 +106,6 @@ async function ensureBusinessRow(userId, account) {
     name: account.name,
     plan: account.plan,
     ai_model: account.ai_model,
-    max_messages: account.max_messages,
     max_knowledge: account.max_knowledge,
     max_whatsapp_numbers: account.max_whatsapp_numbers,
     messages_used: 0,

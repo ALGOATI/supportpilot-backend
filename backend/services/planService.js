@@ -1,4 +1,5 @@
 import { getPlanLimits } from "../config/modelRouting.js";
+import { getPlanDefaults } from "../config/planConfig.js";
 import { SCHEMA_CACHE_TEXT, DOES_NOT_EXIST_TEXT } from "../config/constants.js";
 
 /**
@@ -243,7 +244,7 @@ export function createPlanService({ supabaseAdmin }) {
   async function isBusinessActive(userId) {
     const { data: biz, error } = await supabaseAdmin
       .from("client_settings")
-      .select("user_id, plan, subscription_status, max_messages")
+      .select("user_id, plan, subscription_status")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -260,7 +261,8 @@ export function createPlanService({ supabaseAdmin }) {
       return { active: false, reason: `Subscription ${status}` };
     }
 
-    if (biz.max_messages && biz.max_messages > 0) {
+    const maxMessages = getPlanDefaults(biz.plan).max_messages;
+    if (maxMessages && maxMessages > 0) {
       const monthKey = new Date().toISOString().slice(0, 7);
       const { data: usage } = await supabaseAdmin
         .from("usage")
@@ -269,7 +271,7 @@ export function createPlanService({ supabaseAdmin }) {
         .eq("month", monthKey)
         .maybeSingle();
 
-      if (usage && usage.ai_replies_used >= biz.max_messages) {
+      if (usage && usage.ai_replies_used >= maxMessages) {
         return { active: false, reason: "Monthly message limit reached" };
       }
     }
@@ -278,21 +280,8 @@ export function createPlanService({ supabaseAdmin }) {
   }
 
   async function loadBusinessMaxMessages(userId) {
-    const { data, error } = await supabaseAdmin
-      .from("client_settings")
-      .select("max_messages")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (error) {
-      const errText = String(error.message || "").toLowerCase();
-      if (errText.includes(SCHEMA_CACHE_TEXT) || errText.includes(DOES_NOT_EXIST_TEXT)) {
-        return null;
-      }
-      throw new Error(error.message);
-    }
-
-    return data?.max_messages ?? null;
+    const plan = await loadUserPlan(userId);
+    return getPlanDefaults(plan).max_messages;
   }
 
   return {

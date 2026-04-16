@@ -66,7 +66,7 @@ export function createConversationEngine(deps) {
   }
 
   // Maps plan name to model-routing tier for quality-of-service params only.
-  // NOT used for billing limits — those come from client_settings.max_messages.
+  // NOT used for billing limits — those are derived from planConfig.js.
   function mapPlanToTier(plan) {
     const p = String(plan || "").trim().toLowerCase();
     if (p === "pro") return "pro";

@@ -9,6 +9,7 @@ import {
 import { UUID_REGEX } from "../middleware/auth.js";
 import { publicRateLimit, widgetRateLimit } from "../middleware/rateLimiter.js";
 import { sanitizeExternalIdentifier } from "../config/utils.js";
+import { getPlanDefaults } from "../config/planConfig.js";
 
 /* ================================
   Conversation routes — covers the dashboard reply queue, inbound message
@@ -824,7 +825,7 @@ export function createConversationsRouter({
 
       const businessQuery = await supabaseAdmin
         .from("client_settings")
-        .select("user_id,name,plan,max_messages,ai_model")
+        .select("user_id,name,plan,ai_model")
         .eq("user_id", businessId)
         .maybeSingle();
 
@@ -854,7 +855,7 @@ export function createConversationsRouter({
 
       const monthlyStatus = await usageService.getMonthlyUsageStatus({
         businessId,
-        maxMessages: business.max_messages,
+        maxMessages: getPlanDefaults(business.plan).max_messages,
       });
       if (monthlyStatus.isOverLimit) {
         return res.status(429).json({
