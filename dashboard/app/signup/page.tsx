@@ -4,10 +4,9 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { getBackendUrl } from "@/lib/backend-url";
 import { DashboardLanguage, t, isRtlLanguage } from "@/lib/i18n";
 
-export default function LoginPage() {
+export default function SignupPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -23,43 +22,36 @@ export default function LoginPage() {
     arabic: "AR",
   };
 
-  async function handleLogin(e?: React.FormEvent) {
+  async function handleSignup(e?: React.FormEvent) {
     if (e) e.preventDefault();
     if (!email.trim() || !password) return;
+    if (password.length < 8) {
+      setError(tr("signup_password_too_short"));
+      return;
+    }
     setLoading(true);
     setError(null);
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    const { data, error: signUpError } = await supabase.auth.signUp({
       email: email.trim(),
       password,
     });
 
-    if (signInError) {
-      setError(signInError.message);
+    if (signUpError) {
+      setError(signUpError.message);
       setLoading(false);
       return;
     }
 
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) {
-        router.push("/dashboard");
-        return;
-      }
-
-      const res = await fetch(`${getBackendUrl()}/api/setup/status`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const status = await res.json();
-        router.push(status?.completed ? "/dashboard" : "/setup");
-      } else {
-        router.push("/dashboard");
-      }
-    } catch {
-      router.push("/dashboard");
+    // If Supabase email confirmation is disabled, `session` is set and we can
+    // proceed straight to setup. Otherwise show a confirm-email message.
+    if (data.session) {
+      router.push("/setup");
+      return;
     }
+
+    setLoading(false);
+    setError(tr("signup_check_email"));
   }
 
   return (
@@ -68,11 +60,27 @@ export default function LoginPage() {
       <div style={styles.ambientOrb2} />
 
       <div style={styles.card}>
-        <LanguageSwitcher
-          language={language}
-          setLanguage={setLanguage}
-          labels={langLabels}
-        />
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20, gap: 6 }}>
+          {(["english", "swedish", "arabic"] as DashboardLanguage[]).map((lang) => (
+            <button
+              key={lang}
+              type="button"
+              onClick={() => setLanguage(lang)}
+              style={{
+                padding: "5px 12px",
+                borderRadius: 999,
+                border: language === lang ? "1.5px solid #2563eb" : "1.5px solid #e2e8f0",
+                background: language === lang ? "#eff6ff" : "transparent",
+                color: language === lang ? "#2563eb" : "#64748b",
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              {langLabels[lang]}
+            </button>
+          ))}
+        </div>
 
         <div style={styles.logoRow}>
           <div style={styles.logoMark}>
@@ -83,12 +91,12 @@ export default function LoginPage() {
           <span style={styles.logoText}>SupportPilot</span>
         </div>
 
-        <h1 style={styles.heading}>{tr("login_title")}</h1>
-        <p style={styles.subtext}>{tr("login_password_description")}</p>
+        <h1 style={styles.heading}>{tr("signup_title")}</h1>
+        <p style={styles.subtext}>{tr("signup_description")}</p>
 
         {error && <p style={styles.error}>{error}</p>}
 
-        <form onSubmit={handleLogin} style={{ marginTop: 24, display: "grid", gap: 12 }}>
+        <form onSubmit={handleSignup} style={{ marginTop: 24, display: "grid", gap: 12 }}>
           <input
             type="email"
             placeholder={tr("email_placeholder")}
@@ -100,11 +108,12 @@ export default function LoginPage() {
           />
           <input
             type="password"
-            placeholder={tr("password_placeholder")}
+            placeholder={tr("signup_password_placeholder")}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
+            autoComplete="new-password"
             style={styles.input}
+            minLength={8}
             required
           />
 
@@ -117,54 +126,19 @@ export default function LoginPage() {
               cursor: loading || !email.trim() || !password ? "not-allowed" : "pointer",
             }}
           >
-            {loading ? tr("sending") : tr("login_submit")}
+            {loading ? tr("sending") : tr("signup_submit")}
           </button>
         </form>
 
         <p style={{ ...styles.hint, marginTop: 20, textAlign: "center" }}>
-          {tr("login_no_account")}{" "}
-          <Link href="/signup" style={styles.link}>
-            {tr("login_signup_link")}
+          {tr("signup_have_account")}{" "}
+          <Link href="/login" style={styles.link}>
+            {tr("signup_login_link")}
           </Link>
         </p>
       </div>
 
       <p style={styles.footer}>SupportPilot</p>
-    </div>
-  );
-}
-
-function LanguageSwitcher({
-  language,
-  setLanguage,
-  labels,
-}: {
-  language: DashboardLanguage;
-  setLanguage: (l: DashboardLanguage) => void;
-  labels: Record<DashboardLanguage, string>;
-}) {
-  return (
-    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 20, gap: 6 }}>
-      {(["english", "swedish", "arabic"] as DashboardLanguage[]).map((lang) => (
-        <button
-          key={lang}
-          type="button"
-          onClick={() => setLanguage(lang)}
-          style={{
-            padding: "5px 12px",
-            borderRadius: 999,
-            border: language === lang ? "1.5px solid #2563eb" : "1.5px solid #e2e8f0",
-            background: language === lang ? "#eff6ff" : "transparent",
-            color: language === lang ? "#2563eb" : "#64748b",
-            fontWeight: 600,
-            fontSize: 12,
-            cursor: "pointer",
-            transition: "all 0.15s ease",
-          }}
-        >
-          {labels[lang]}
-        </button>
-      ))}
     </div>
   );
 }
@@ -246,7 +220,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#0f172a",
     fontSize: 15,
     outline: "none",
-    transition: "border-color 0.2s, box-shadow 0.2s",
     boxSizing: "border-box",
   },
   primaryBtn: {
@@ -258,15 +231,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: "white",
     fontSize: 15,
     fontWeight: 700,
-    letterSpacing: "-0.01em",
-    transition: "opacity 0.15s, transform 0.1s",
     boxSizing: "border-box",
   },
-  link: {
-    color: "#2563eb",
-    fontWeight: 600,
-    textDecoration: "underline",
-    textUnderlineOffset: 2,
-  },
+  link: { color: "#2563eb", fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2 },
   footer: { marginTop: 32, fontSize: 13, color: "#94a3b8", fontWeight: 600, letterSpacing: "0.02em", zIndex: 1 },
 };

@@ -122,7 +122,7 @@ export function createSettingsRouter({
           .eq("user_id", userId),
         supabaseAdmin
           .from("client_settings")
-          .select("plan")
+          .select("plan, whatsapp_connected")
           .eq("user_id", userId)
           .maybeSingle(),
         supabaseAdmin
@@ -188,7 +188,7 @@ export function createSettingsRouter({
       let planSelected = false;
       if (!settingsQ.error) {
         plan = settingsQ.data?.plan || "starter";
-        planSelected = ["trial", "starter", "pro", "business"].includes(plan);
+        planSelected = ["free", "starter", "pro", "business"].includes(plan);
       } else if (
         !isSchemaCompatibilityError(settingsQ.error, ["client_settings", "plan"])
       ) {
@@ -213,9 +213,9 @@ export function createSettingsRouter({
         throw new Error(whatsappConversationQ.error.message);
       }
 
-      const defaultClientId = String(process.env.WHATSAPP_DEFAULT_CLIENT_ID || "").trim();
+      const hasWhatsAppClientConfig = !settingsQ.error && Boolean(settingsQ.data?.whatsapp_connected);
       const whatsappConnected =
-        hasWhatsAppMap || hasWhatsAppConversation || defaultClientId === userId;
+        hasWhatsAppMap || hasWhatsAppConversation || hasWhatsAppClientConfig;
 
       const aiEnabled = isAiGloballyReady();
       const models = getModelsForPlan(plan);

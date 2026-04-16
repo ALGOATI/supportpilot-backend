@@ -99,12 +99,9 @@ async function ensureUser(account) {
 }
 
 async function ensureBusinessRow(userId, account) {
-  // The businesses table is set up by the Wix payment webhook in production,
-  // and may not exist in all environments. Best-effort upsert: log and skip
-  // on schema errors so the script remains idempotent.
   const nowIso = new Date().toISOString();
   const businessRecord = {
-    id: userId,
+    user_id: userId,
     email: account.email,
     name: account.name,
     plan: account.plan,
@@ -119,25 +116,14 @@ async function ensureBusinessRow(userId, account) {
   };
 
   const { error } = await supabase
-    .from("businesses")
-    .upsert(businessRecord, { onConflict: "id" });
+    .from("client_settings")
+    .upsert(businessRecord, { onConflict: "user_id" });
 
-  if (error) {
-    const msg = String(error.message || "").toLowerCase();
-    if (msg.includes("schema cache") || msg.includes("does not exist")) {
-      console.log("  businesses table not present — skipping (using client_settings as source of truth)");
-      return;
-    }
-    throw new Error(`Business upsert failed: ${error.message}`);
-  }
-  console.log(`  Business row upserted (plan=${account.plan})`);
+  if (error) throw new Error(`client_settings upsert failed: ${error.message}`);
+  console.log(`  client_settings business fields upserted (plan=${account.plan})`);
 }
 
 async function ensureClientSettings(userId, account) {
-  // client_settings is the canonical source for plan + per-user AI settings
-  // when the businesses table is unavailable. The backend's loadUserPlan
-  // falls back to client_settings.plan, so this row is sufficient to drive
-  // plan-based feature gating.
   const { error } = await supabase.from("client_settings").upsert(
     {
       user_id: userId,

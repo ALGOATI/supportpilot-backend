@@ -3,28 +3,7 @@
   conversation lookup, inbound deduping, message sending, owner-side
   forwarding, and owner reply handling.
 ================================ */
-export function createWhatsAppService({ supabaseAdmin, updateConversationManualMode }) {
-  async function resolveWhatsAppClientId(externalUserId) {
-    // Reuse existing mappings first (best signal in multi-user setups).
-    const { data: mappedRow, error: mappedErr } = await supabaseAdmin
-      .from("conversation_map")
-      .select("user_id")
-      .eq("channel", "whatsapp")
-      .eq("external_user_id", externalUserId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (mappedErr) throw new Error(mappedErr.message);
-    if (mappedRow?.user_id) return mappedRow.user_id;
-
-    const fallbackClientId = String(process.env.WHATSAPP_DEFAULT_CLIENT_ID || "").trim();
-    if (!fallbackClientId) {
-      throw new Error("Missing WHATSAPP_DEFAULT_CLIENT_ID for WhatsApp inbound fallback");
-    }
-    return fallbackClientId;
-  }
-
+export function createWhatsAppService({ supabaseAdmin, updateConversationManualMode, learnFromHumanReply }) {
   // --- Multi-client WhatsApp helpers ---
 
   async function getClientWhatsAppConfig(userId) {
@@ -79,15 +58,15 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
     if (!normalizedSender) return null;
 
     const { data, error } = await supabaseAdmin
-      .from("business_profiles")
-      .select("user_id,business_owner_phone")
-      .not("business_owner_phone", "is", null)
+      .from("client_settings")
+      .select("user_id,owner_phone_number")
+      .not("owner_phone_number", "is", null)
       .limit(5000);
 
     if (error) {
       const errText = String(error.message || "").toLowerCase();
       if (
-        errText.includes("business_owner_phone") ||
+        errText.includes("owner_phone_number") ||
         errText.includes(SCHEMA_CACHE_TEXT) ||
         errText.includes(DOES_NOT_EXIST_TEXT)
       ) {
@@ -98,12 +77,12 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
 
     const matches = [];
     for (const row of data || []) {
-      const candidate = normalizePhoneForMatch(row?.business_owner_phone);
+      const candidate = normalizePhoneForMatch(row?.owner_phone_number);
       if (!candidate) continue;
       if (candidate === normalizedSender) {
         matches.push({
           userId: row.user_id,
-          businessOwnerPhone: row.business_owner_phone,
+          businessOwnerPhone: row.owner_phone_number,
         });
       }
     }
@@ -219,26 +198,12 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
   }
 
   async function sendWhatsAppTextMessage({ to, text, clientConfig }) {
-    // Per-client config takes priority; fall back to env vars for backwards compatibility
-    let token;
-    let phoneNumberId;
-
-    if (clientConfig?.accessToken && clientConfig?.phoneNumberId) {
-      token = String(clientConfig.accessToken).trim();
-      phoneNumberId = clientConfig.phoneNumberId;
-    } else {
-      const rawToken = String(process.env.WHATSAPP_TOKEN || "");
-      token = rawToken
-        .trim()
-        .replaceAll(/^['"]|['"]$/g, "")
-        .replaceAll(/^Bearer\s+/i, "")
-        .trim();
-      phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    if (!clientConfig?.accessToken || !clientConfig?.phoneNumberId) {
+      throw new Error("Missing WhatsApp credentials — per-client config required");
     }
 
-    if (!token || !phoneNumberId) {
-      throw new Error("Missing WhatsApp credentials (no per-client config and no env vars)");
-    }
+    const token = String(clientConfig.accessToken).trim();
+    const phoneNumberId = clientConfig.phoneNumberId;
 
     const resp = await fetch(
       `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
@@ -279,18 +244,18 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
     if (!userId || !from || !incomingText) return;
 
     const { data, error } = await supabaseAdmin
-      .from("business_profiles")
-      .select("business_owner_phone")
+      .from("client_settings")
+      .select("owner_phone_number")
       .eq("user_id", userId)
       .maybeSingle();
 
     if (error) {
       const errText = String(error.message || "").toLowerCase();
-      if (errText.includes("business_owner_phone")) return;
+      if (errText.includes("owner_phone_number")) return;
       throw new Error(error.message);
     }
 
-    const ownerPhone = String(data?.business_owner_phone || "").trim();
+    const ownerPhone = String(data?.owner_phone_number || "").trim();
     if (!ownerPhone) return;
 
     const normalizedOwner = normalizePhoneForMatch(ownerPhone);
@@ -367,6 +332,20 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
       if (fallbackErr) throw new Error(fallbackErr.message || "Failed to update conversation");
     }
 
+    // Learn from the owner's reply so future questions get answered automatically
+    if (typeof learnFromHumanReply === "function") {
+      try {
+        await learnFromHumanReply({
+          userId,
+          conversationId: conversation.id,
+          humanReply: incomingText,
+          forceLearn: false,
+        });
+      } catch (learnErr) {
+        console.error("WhatsApp owner reply learning failed:", learnErr?.message || learnErr);
+      }
+    }
+
     return {
       handled: true,
       sentToCustomer: true,
@@ -376,7 +355,6 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
   }
 
   return {
-    resolveWhatsAppClientId,
     getClientWhatsAppConfig,
     findClientByPhoneNumberId,
     isWhatsAppConnected,

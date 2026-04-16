@@ -5,8 +5,7 @@ import { getPlanDefaults } from "../config/planConfig.js";
 
 /* ================================
   Third-party integration routes — Google Calendar, ICS feed, multi-client
-  WhatsApp connect/disconnect, Meta WhatsApp webhooks, and Wix order/payment
-  webhooks.
+  WhatsApp connect/disconnect, and Meta WhatsApp webhooks.
 ================================ */
 export function createIntegrationsRouter({
   supabaseAdmin,
@@ -15,8 +14,6 @@ export function createIntegrationsRouter({
   calendarService,
   findClientByPhoneNumberId,
   messaging,
-  wixWebhookService,
-  wixPaymentService,
 }) {
   const router = express.Router();
 
@@ -109,9 +106,9 @@ export function createIntegrationsRouter({
   router.get("/api/calendar/google/status", requireSupabaseUser, async (req, res) => {
     try {
       const { data } = await supabaseAdmin
-        .from("businesses")
+        .from("client_settings")
         .select("google_calendar_tokens, google_calendar_id")
-        .eq("id", req.user.id)
+        .eq("user_id", req.user.id)
         .single();
 
       return res.json({
@@ -268,75 +265,6 @@ export function createIntegrationsRouter({
     } catch (e) {
       console.error(e);
       return res.status(500).json({ error: SERVER_ERROR_MESSAGE });
-    }
-  });
-
-  router.post("/api/webhooks/wix", async (req, res) => {
-    try {
-      if (!String(process.env.WIX_WEBHOOK_SECRET || "").trim()) {
-        return res.status(500).json({ error: "Server missing WIX_WEBHOOK_SECRET env var" });
-      }
-
-      const secretHeader =
-        req.get("x-wix-secret") || req.get("authorization") || req.get("x-webhook-secret");
-      if (!wixWebhookService.verifySecret(secretHeader)) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-
-      const result = await wixWebhookService.processEvent(req.body || {});
-      return res.status(200).json({
-        ok: true,
-        ignored: Boolean(result.ignored),
-        businessId: result.businessId,
-        email: result.email,
-        plan: result.plan,
-        cancellation: result.cancellation,
-        planStartedAt: result.planStartedAt,
-        planExpiresAt: result.planExpiresAt,
-        wixOrderId: result.orderId,
-      });
-    } catch (err) {
-      const statusCode = Number(err?.statusCode) || 500;
-      if (statusCode >= 500) {
-        console.error("Wix webhook handling failed:", err?.message || err);
-      }
-      const responseError =
-        statusCode >= 500 ? SERVER_ERROR_MESSAGE : String(err?.message || "Request failed");
-      return res.status(statusCode).json({ error: responseError });
-    }
-  });
-
-  /* ================================
-    WIX PAYMENT WEBHOOK — ONBOARDING
-  ================================ */
-  router.post("/webhooks/wix/payment", async (req, res) => {
-    try {
-      // Verify webhook secret
-      if (!String(process.env.WIX_WEBHOOK_SECRET || "").trim()) {
-        return res.status(500).json({ error: "Server missing WIX_WEBHOOK_SECRET env var" });
-      }
-
-      const secretHeader =
-        req.get("x-wix-secret") || req.get("authorization") || req.get("x-webhook-secret");
-      if (!wixWebhookService.verifySecret(secretHeader)) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-
-      // Expire stale trials on each webhook (lightweight, idempotent)
-      await wixPaymentService.checkExpiredTrials().catch((e) =>
-        console.warn("⚠️ Trial expiry check failed:", e?.message || e)
-      );
-
-      const result = await wixPaymentService.handlePaymentWebhook(req.body || {});
-      return res.status(200).json(result);
-    } catch (err) {
-      const statusCode = Number(err?.statusCode) || 500;
-      if (statusCode >= 500) {
-        console.error("❌ Wix payment webhook failed:", err?.message || err);
-      }
-      const responseError =
-        statusCode >= 500 ? SERVER_ERROR_MESSAGE : String(err?.message || "Request failed");
-      return res.status(statusCode).json({ error: responseError });
     }
   });
 

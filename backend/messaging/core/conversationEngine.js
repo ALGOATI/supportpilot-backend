@@ -66,7 +66,7 @@ export function createConversationEngine(deps) {
   }
 
   // Maps plan name to model-routing tier for quality-of-service params only.
-  // NOT used for billing limits — those come from businesses.max_messages.
+  // NOT used for billing limits — those come from client_settings.max_messages.
   function mapPlanToTier(plan) {
     const p = String(plan || "").trim().toLowerCase();
     if (p === "pro") return "pro";
@@ -451,9 +451,9 @@ export function createConversationEngine(deps) {
     const tone = settings?.tone || "professional";
     const replyLength = settings?.reply_length || "concise";
     const { data: businessRow } = await supabaseAdmin
-      .from("businesses")
+      .from("client_settings")
       .select("ai_model")
-      .eq("id", userId)
+      .eq("user_id", userId)
       .maybeSingle();
     const rawAiModel = businessRow?.ai_model || "gpt-4o-mini";
     const model = rawAiModel.includes("/") ? rawAiModel : `openai/${rawAiModel}`;

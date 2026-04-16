@@ -15,19 +15,7 @@ export function createAuthRouter({ supabaseAdmin }) {
         return res.status(400).json({ error: "Email is required" });
       }
 
-      // Try businesses table first (set by Wix payment webhook). When that
-      // table is unavailable, fall back to scanning Supabase auth users.
-      const { data: business, error: bizErr } = await supabaseAdmin
-        .from("businesses")
-        .select("id")
-        .eq("email", email)
-        .maybeSingle();
-
-      if (!bizErr && business) {
-        return res.json({ exists: true });
-      }
-
-      // Fallback: paginate auth users (sufficient for early-stage user counts)
+      // Check Supabase Auth users (the canonical source of email addresses).
       let page = 1;
       const perPage = 200;
       while (page <= 25) {

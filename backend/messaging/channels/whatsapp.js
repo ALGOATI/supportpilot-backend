@@ -26,29 +26,16 @@ export function createWhatsAppAdapter(deps) {
     isBusinessActive,
     incrementMonthlyUsage,
     incrementMonthlyStat,
+    learnFromHumanReply,
   } = deps;
 
   async function sendWhatsAppTextMessage({ to, text, clientConfig }) {
-    // Per-client config takes priority; fall back to env vars for backwards compatibility
-    let token;
-    let phoneNumberId;
-
-    if (clientConfig?.accessToken && clientConfig?.phoneNumberId) {
-      token = String(clientConfig.accessToken).trim();
-      phoneNumberId = clientConfig.phoneNumberId;
-    } else {
-      const rawToken = String(process.env.WHATSAPP_TOKEN || "");
-      token = rawToken
-        .trim()
-        .replace(/^['"]|['"]$/g, "")
-        .replace(/^Bearer\s+/i, "")
-        .trim();
-      phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    if (!clientConfig?.accessToken || !clientConfig?.phoneNumberId) {
+      throw new Error("Missing WhatsApp credentials — per-client config required");
     }
 
-    if (!token || !phoneNumberId) {
-      throw new Error("Missing WhatsApp credentials (no per-client config and no env vars)");
-    }
+    const token = String(clientConfig.accessToken).trim();
+    const phoneNumberId = clientConfig.phoneNumberId;
 
     const resp = await fetch(
       `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
@@ -93,18 +80,18 @@ export function createWhatsAppAdapter(deps) {
     if (!userId || !from || !incomingText) return;
 
     const { data, error } = await supabaseAdmin
-      .from("business_profiles")
-      .select("business_owner_phone")
+      .from("client_settings")
+      .select("owner_phone_number")
       .eq("user_id", userId)
       .maybeSingle();
 
     if (error) {
       const errText = String(error.message || "").toLowerCase();
-      if (errText.includes("business_owner_phone")) return;
+      if (errText.includes("owner_phone_number")) return;
       throw new Error(error.message);
     }
 
-    const ownerPhone = String(data?.business_owner_phone || "").trim();
+    const ownerPhone = String(data?.owner_phone_number || "").trim();
     if (!ownerPhone) return;
 
     const normalizedOwner = normalizePhoneForMatch(ownerPhone);
@@ -212,6 +199,20 @@ export function createWhatsAppAdapter(deps) {
       if (fallbackErr) throw new Error(fallbackErr.message || "Failed to update conversation");
     }
 
+    // Learn from the owner's reply so future questions get answered automatically
+    if (typeof learnFromHumanReply === "function") {
+      try {
+        await learnFromHumanReply({
+          userId,
+          conversationId: conversation.id,
+          humanReply: incomingText,
+          forceLearn: false,
+        });
+      } catch (learnErr) {
+        console.error("WhatsApp owner reply learning failed:", learnErr?.message || learnErr);
+      }
+    }
+
     return {
       handled: true,
       sentToCustomer: true,
@@ -277,7 +278,7 @@ export function createWhatsAppAdapter(deps) {
         phoneNumberId,
       });
 
-      let stage = "resolveWhatsAppClientId";
+      let stage = "resolveClientByPhoneNumberId";
       try {
         stage = "resolveBusinessOwnerByPhone";
         const ownerMatch = await store.resolveBusinessOwnerByPhone(from);
@@ -334,10 +335,13 @@ export function createWhatsAppAdapter(deps) {
           }
         }
 
-        // Fallback: legacy resolution by customer phone or env var default
         if (!clientId) {
-          stage = "resolveWhatsAppClientId";
-          clientId = await deps.resolveWhatsAppClientId(from);
+          console.warn("[WA] webhook:unresolvable_message — no tenant found for phone_number_id, dropping message", {
+            phoneNumberId,
+            from,
+            metaMessageId,
+          });
+          continue;
         }
         console.log("[WA DEBUG] webhook:chosen_clientId", { from, clientId });
 

@@ -823,9 +823,9 @@ export function createConversationsRouter({
       }
 
       const businessQuery = await supabaseAdmin
-        .from("businesses")
-        .select("id,name,plan,max_messages,ai_model")
-        .eq("id", businessId)
+        .from("client_settings")
+        .select("user_id,name,plan,max_messages,ai_model")
+        .eq("user_id", businessId)
         .maybeSingle();
 
       if (businessQuery.error) {

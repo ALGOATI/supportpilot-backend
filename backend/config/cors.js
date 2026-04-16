@@ -5,7 +5,7 @@ import cors from "cors";
   Set ALLOWED_ORIGINS in Render to allow dashboard access:
   Example: ALLOWED_ORIGINS=https://your-dashboard.vercel.app,https://your-custom-domain.com
   In production, requests from unlisted origins will be blocked.
-  Webhook endpoints (WhatsApp, Wix) don't send an Origin header, so they're unaffected.
+  Webhook endpoints (WhatsApp, Stripe) don't send an Origin header, so they're unaffected.
 ================================ */
 
 // Factory so env vars are read at call time (after dotenv has loaded), not at

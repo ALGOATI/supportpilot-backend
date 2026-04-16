@@ -240,11 +240,48 @@ export function createPlanService({ supabaseAdmin }) {
     return "starter";
   }
 
+  async function isBusinessActive(userId) {
+    const { data: biz, error } = await supabaseAdmin
+      .from("client_settings")
+      .select("user_id, plan, subscription_status, max_messages")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (error) {
+      return { active: false, reason: `Database error: ${error.message}` };
+    }
+    if (!biz) {
+      return { active: false, reason: "Business not found" };
+    }
+
+    const status = String(biz.subscription_status || "active").toLowerCase();
+    const blockedStatuses = new Set(["canceled", "unpaid", "incomplete_expired"]);
+    if (blockedStatuses.has(status)) {
+      return { active: false, reason: `Subscription ${status}` };
+    }
+
+    if (biz.max_messages && biz.max_messages > 0) {
+      const monthKey = new Date().toISOString().slice(0, 7);
+      const { data: usage } = await supabaseAdmin
+        .from("usage")
+        .select("ai_replies_used")
+        .eq("business_id", userId)
+        .eq("month", monthKey)
+        .maybeSingle();
+
+      if (usage && usage.ai_replies_used >= biz.max_messages) {
+        return { active: false, reason: "Monthly message limit reached" };
+      }
+    }
+
+    return { active: true, reason: null };
+  }
+
   async function loadBusinessMaxMessages(userId) {
     const { data, error } = await supabaseAdmin
-      .from("businesses")
+      .from("client_settings")
       .select("max_messages")
-      .eq("id", userId)
+      .eq("user_id", userId)
       .maybeSingle();
 
     if (error) {
@@ -274,5 +311,6 @@ export function createPlanService({ supabaseAdmin }) {
     countMonthlyAiConversations,
     loadUserPlan,
     loadBusinessMaxMessages,
+    isBusinessActive,
   };
 }

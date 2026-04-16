@@ -26,4 +26,5 @@ if (missingEnvVars.length > 0) {
 console.log("[DEBUG] dotenv envPath:", envPath);
 console.log("[DEBUG] dotenv loaded:", !dotenvResult.error);
 console.log("[DEBUG] process.cwd():", process.cwd());
-console.log("[INFO] WIX_WEBHOOK_SECRET configured:", !!process.env.WIX_WEBHOOK_SECRET);
+console.log("[INFO] STRIPE_SECRET_KEY configured:", !!process.env.STRIPE_SECRET_KEY);
+console.log("[INFO] STRIPE_WEBHOOK_SECRET configured:", !!process.env.STRIPE_WEBHOOK_SECRET);

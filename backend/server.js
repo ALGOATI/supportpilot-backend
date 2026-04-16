@@ -7,8 +7,7 @@ import { createUsageService } from "./services/usage/usageService.js";
 import { createMonthlyStatsService } from "./services/usage/monthlyStatsService.js";
 import { createKnowledgeService } from "./services/knowledge/knowledgeService.js";
 import { createOpenAiSupportService } from "./services/ai/openAiSupportService.js";
-import { createWixWebhookService } from "./services/wix/wixWebhookService.js";
-import { createWixPaymentService } from "./services/wix/wixPaymentService.js";
+import { createStripeService } from "./services/stripe/stripeService.js";
 import { createCalendarService } from "./services/calendar/calendarService.js";
 import { getPlanDefaults } from "./config/planConfig.js";
 import {
@@ -44,6 +43,7 @@ import {
   import { createAnalyticsRouter } from "./routes/analytics.js";
   import { createSettingsRouter } from "./routes/settings.js";
   import { createIntegrationsRouter } from "./routes/integrations.js";
+  import { createStripeRouter } from "./routes/stripe.js";
   import {
     styleRules,
     parsePricingMap,
@@ -54,7 +54,7 @@ import {
     buildRuleBasedConversationTitle,
     detectTopicFromTitle,
     isGenericConversationTitle,
-    shouldUpdateConversationTitle,
+    shouldUpdateConversationTitle, 
     detectConversationTags,
     normalizeBusinessType,
     buildIndustryTemplateGuidance,
@@ -101,11 +101,6 @@ import {
 
   app.use(createCorsMiddleware());
 
-  app.use(express.json({
-    limit: '1mb',
-    verify: (req, _res, buf) => { req.rawBody = buf; },
-  }));
-
   console.log("✅ CORS middleware applied");
   console.log("🚀 Starting SupportPilot backend on port:", PORT);
   console.log("[DEBUG] __dirname:", __dirname);
@@ -123,19 +118,27 @@ import {
   const openAiSupportService = createOpenAiSupportService({
     apiKey: process.env.OPENAI_API_KEY,
   });
-  const wixWebhookService = createWixWebhookService({
-    supabaseAdmin,
-    usageService,
-    webhookSecret: process.env.WIX_WEBHOOK_SECRET,
-  });
-  const wixPaymentService = createWixPaymentService({
-    supabaseAdmin,
-    dashboardUrl: process.env.DASHBOARD_URL,
-  });
+  const stripeService = createStripeService({ supabaseAdmin });
   const calendarService = createCalendarService({ supabaseAdmin });
 
 
   const { verifyWidgetClient, requireSupabaseUser } = createAuthMiddleware({ supabaseAdmin });
+
+  // Stripe webhook must see the raw request body for signature verification,
+  // so mount the Stripe router BEFORE the global JSON parser. The router
+  // applies express.raw() for the webhook path and express.json() for
+  // the other Stripe endpoints.
+  app.use(
+    createStripeRouter({
+      requireSupabaseUser,
+      stripeService,
+    })
+  );
+
+  app.use(express.json({
+    limit: '1mb',
+    verify: (req, _res, buf) => { req.rawBody = buf; },
+  }));
 
   const planService = createPlanService({ supabaseAdmin });
   const {
@@ -182,9 +185,9 @@ import {
   const whatsappService = createWhatsAppService({
     supabaseAdmin,
     updateConversationManualMode,
+    learnFromHumanReply,
   });
   const {
-    resolveWhatsAppClientId,
     getClientWhatsAppConfig,
     findClientByPhoneNumberId,
     resolveBusinessOwnerByPhone,
@@ -235,7 +238,6 @@ import {
     getOrCreateConversationMap,
     getConversationByIdForUser,
     upsertConversationRecord,
-    wixPaymentService,
   });
   const {
     getTodayIsoDateInTimezone,
@@ -350,12 +352,12 @@ import {
     },
     channelDeps: {
       supabaseAdmin,
-      resolveWhatsAppClientId,
       getClientWhatsAppConfig,
       findClientByPhoneNumberId,
-      isBusinessActive: wixPaymentService.isBusinessActive,
+      isBusinessActive: planService.isBusinessActive,
       incrementMonthlyUsage: usageService.incrementMonthlyUsage,
       incrementMonthlyStat: monthlyStatsService.incrementMonthlyStat,
+      learnFromHumanReply,
     },
   });
 
@@ -423,8 +425,6 @@ import {
       calendarService,
       findClientByPhoneNumberId,
       messaging,
-      wixWebhookService,
-      wixPaymentService,
     })
   );
 

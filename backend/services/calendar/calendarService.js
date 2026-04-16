@@ -12,27 +12,27 @@ export function createCalendarService({ supabaseAdmin }) {
 
   async function getOrCreateFeedToken(businessId) {
     const { data } = await supabaseAdmin
-      .from("businesses")
+      .from("client_settings")
       .select("calendar_feed_token")
-      .eq("id", businessId)
+      .eq("user_id", businessId)
       .single();
 
     if (data?.calendar_feed_token) return data.calendar_feed_token;
 
     const token = crypto.randomBytes(32).toString("hex");
     await supabaseAdmin
-      .from("businesses")
+      .from("client_settings")
       .update({ calendar_feed_token: token })
-      .eq("id", businessId);
+      .eq("user_id", businessId);
 
     return token;
   }
 
   async function generateIcsFeed(businessId, token) {
     const { data: business } = await supabaseAdmin
-      .from("businesses")
-      .select("id, name, calendar_feed_token")
-      .eq("id", businessId)
+      .from("client_settings")
+      .select("user_id, name, calendar_feed_token")
+      .eq("user_id", businessId)
       .eq("calendar_feed_token", token)
       .single();
 
@@ -137,24 +137,24 @@ export function createCalendarService({ supabaseAdmin }) {
     const { tokens } = await oauth2Client.getToken(code);
 
     await supabaseAdmin
-      .from("businesses")
+      .from("client_settings")
       .update({
         google_calendar_tokens: tokens,
         google_calendar_id: "primary",
       })
-      .eq("id", businessId);
+      .eq("user_id", businessId);
 
     return tokens;
   }
 
   async function disconnectGoogleCalendar(businessId) {
     await supabaseAdmin
-      .from("businesses")
+      .from("client_settings")
       .update({
         google_calendar_tokens: null,
         google_calendar_id: "primary",
       })
-      .eq("id", businessId);
+      .eq("user_id", businessId);
   }
 
   async function getAuthedCalendarClient(business) {
@@ -170,9 +170,9 @@ export function createCalendarService({ supabaseAdmin }) {
       try {
         const merged = { ...business.google_calendar_tokens, ...newTokens };
         await supabaseAdmin
-          .from("businesses")
+          .from("client_settings")
           .update({ google_calendar_tokens: merged })
-          .eq("id", business.id);
+          .eq("user_id", business.user_id);
       } catch (err) {
         console.error("Failed to persist refreshed Google tokens:", err?.message);
       }
@@ -248,9 +248,9 @@ export function createCalendarService({ supabaseAdmin }) {
   async function syncBookingToCalendar({ userId, bookingId, status }) {
     try {
       const { data: business } = await supabaseAdmin
-        .from("businesses")
-        .select("id, name, timezone, google_calendar_tokens, google_calendar_id")
-        .eq("id", userId)
+        .from("client_settings")
+        .select("user_id, name, timezone, google_calendar_tokens, google_calendar_id")
+        .eq("user_id", userId)
         .single();
 
       if (!business) return;

@@ -40,8 +40,6 @@ export function createConversationPipelineService({
   getOrCreateConversationMap,
   getConversationByIdForUser,
   upsertConversationRecord,
-  // external services
-  wixPaymentService,
 }) {
   // messaging is created AFTER this factory in server.js because the
   // messaging system depends on insertMessageWithFallback (defined here).
@@ -132,9 +130,9 @@ export function createConversationPipelineService({
       : "professional";
     const replyLength = settings?.reply_length || "concise";
     const { data: businessRow } = await supabaseAdmin
-      .from("businesses")
+      .from("client_settings")
       .select("ai_model")
-      .eq("id", userId)
+      .eq("user_id", userId)
       .maybeSingle();
     const rawAiModel = businessRow?.ai_model || "gpt-4o-mini";
     const model = rawAiModel.includes("/") ? rawAiModel : `openai/${rawAiModel}`;
@@ -856,7 +854,7 @@ ${business}
 
   async function processReplyJob(job) {
     // Check before calling AI — catches edge cases where limit hit between queue and processing
-    const activeCheck = await wixPaymentService.isBusinessActive(job.user_id);
+    const activeCheck = await planService.isBusinessActive(job.user_id);
     if (!activeCheck.active) {
       console.log(`⛔ [Job] Skipping job ${job.id} — business ${job.user_id} inactive (${activeCheck.reason})`);
       return { skipped: true, reason: activeCheck.reason };
