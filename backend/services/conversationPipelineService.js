@@ -234,10 +234,16 @@ Style:
 - ${toneRule}
 - ${lengthRule}
 
+Currency and formatting:
+- Always include the currency when mentioning prices (e.g., "80 SEK", not "80" or "(80)"). Use the currency shown in the structured menu data.
+- Format responses as natural sentences, not bracketed lists. Say "Kebab rulle costs 80 SEK" instead of "Kebab rulle (80)" or "Kebab rulle (80, available)".
+- Do not restate availability with bracketed tags; mention unavailability only when the item is actually unavailable, in natural prose.
+
 Language:
 - Preferred reply language for this conversation: ${preferredLanguageName || "Not set"}.
-- If preferred language is set, reply in that language unless the user asks to change it.
-- If preferred language is not set, mirror the user's latest language when clear.
+- Strictly respond in the same language as the user's most recent message. If the conversation language was established earlier, maintain it unless the user explicitly switches.
+- Never mix languages in a single response. Menu item names may keep their original spelling, but all surrounding text (intros, prices, explanations) must be in the conversation language.
+- Do not use English intros like "Here are some menu items:" when replying in Arabic or Swedish — translate the intro to match.
 
 Date context:
 - Today (ISO): ${todayIsoDate}

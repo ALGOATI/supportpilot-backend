@@ -53,9 +53,11 @@ export function createBookingService({ supabaseAdmin }) {
   }
 
   function detectPreferredReplyLanguage(text) {
-    const content = String(text || "").toLowerCase();
-    if (!content) return null;
+    const raw = String(text || "");
+    if (!raw.trim()) return null;
+    const content = raw.toLowerCase();
 
+    // Explicit language-change requests take priority over script heuristics.
     if (
       /\b(reply in english|speak english|in english|english please)\b/i.test(content)
     ) {
@@ -75,6 +77,29 @@ export function createBookingService({ supabaseAdmin }) {
       return "ar";
     }
 
+    // Any Arabic-block character is strong evidence of Arabic.
+    if (/[\u0600-\u06FF]/.test(raw)) {
+      return "ar";
+    }
+
+    // Swedish diacritics or common Swedish function words.
+    if (/[åäöÅÄÖ]/.test(raw)) {
+      return "sv";
+    }
+    if (
+      /\b(hej|tack|jag|och|är|det|inte|med|som|till|kan|ni|vi|hur|vad|när|var|skulle|kunde|snälla|svenska)\b/i.test(
+        content
+      )
+    ) {
+      return "sv";
+    }
+
+    // Latin-script content with no Arabic/Swedish signal defaults to English.
+    if (/[a-zA-Z]/.test(raw)) {
+      return "en";
+    }
+
+    // Numbers, emoji, or punctuation only — no language signal.
     return null;
   }
 

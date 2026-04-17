@@ -2,6 +2,8 @@ import {
   NOT_PROVIDED_LABEL,
   DEFAULT_TIMEZONE,
   KB_SELECT_FIELDS,
+  SCHEMA_CACHE_TEXT,
+  DOES_NOT_EXIST_TEXT,
 } from "../config/constants.js";
 import {
   normalizeBusinessType,
@@ -61,7 +63,9 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
     menuItems,
     faqs,
     bookingRules,
+    currency,
   }) {
+    const currencyCode = String(currency || "SEK").trim() || "SEK";
     const dayNames = [
       "Sunday",
       "Monday",
@@ -117,7 +121,7 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
         const name = String(item?.name || "").trim();
         if (!name) continue;
         const priceValue = item?.price === null || item?.price === undefined ? null : Number(item.price);
-        const price = Number.isFinite(priceValue) ? `${priceValue}` : "N/A";
+        const price = Number.isFinite(priceValue) ? `${priceValue} ${currencyCode}` : "N/A";
         const availability = item?.available === false ? "unavailable" : "available";
         const description = String(item?.description || "").trim().slice(0, 120);
         lines.push(
@@ -167,6 +171,29 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
     return lines.join("\n");
   }
 
+  async function loadTenantCurrency(userId) {
+    if (!userId) return "SEK";
+    const { data, error } = await supabaseAdmin
+      .from("client_settings")
+      .select("currency")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) {
+      const errText = String(error.message || "").toLowerCase();
+      if (
+        errText.includes("currency") ||
+        errText.includes(SCHEMA_CACHE_TEXT) ||
+        errText.includes(DOES_NOT_EXIST_TEXT)
+      ) {
+        return "SEK";
+      }
+      console.error("client_settings currency lookup failed:", error.message);
+      return "SEK";
+    }
+    const code = String(data?.currency || "").trim();
+    return code || "SEK";
+  }
+
   async function loadStructuredBusinessKnowledge(userId) {
     const [
       profileQuery,
@@ -174,6 +201,7 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
       menuQuery,
       faqQuery,
       bookingQuery,
+      currency,
     ] = await Promise.all([
       supabaseAdmin
         .from("business_profiles")
@@ -202,6 +230,7 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
         .select("booking_enabled,require_name,require_phone,max_party_size")
         .eq("user_id", userId)
         .maybeSingle(),
+      loadTenantCurrency(userId),
     ]);
 
     if (profileQuery.error) console.error("business_profiles query failed:", profileQuery.error.message);
@@ -241,6 +270,7 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
         menuItems,
         faqs,
         bookingRules,
+        currency,
       }),
     };
   }
@@ -586,44 +616,6 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
     return null;
   }
 
-  function tryAnswerFromMenu({ text, menuItems, intent = null }) {
-    const msg = String(text || "").toLowerCase();
-    if (intent && intent !== "menu") return null;
-    if (!intent && !containsAnyKeyword(msg, KNOWLEDGE_INTENT_KEYWORDS.menu)) return null;
-    if (!Array.isArray(menuItems) || menuItems.length === 0) return null;
-
-    const normalizedMsg = normalizeTextForMatch(text);
-    const itemMatch = menuItems.find((item) => {
-      const name = normalizeTextForMatch(item?.name);
-      return name && normalizedMsg.includes(name);
-    });
-
-    if (itemMatch) {
-      const status = itemMatch.available === false ? "currently unavailable" : "available";
-      const price =
-        itemMatch.price === null || itemMatch.price === undefined || itemMatch.price === ""
-          ? null
-          : Number(itemMatch.price);
-      const pricePart = Number.isFinite(price) ? ` Price: ${price}.` : "";
-      const desc = String(itemMatch.description || "").trim();
-      const descPart = desc ? ` ${desc}` : "";
-      return `${itemMatch.name} is ${status}.${pricePart}${descPart}`.trim();
-    }
-
-    const topItems = menuItems
-      .filter((item) => String(item?.name || "").trim())
-      .slice(0, 6)
-      .map((item) => {
-        const p =
-          item.price === null || item.price === undefined || item.price === ""
-            ? "N/A"
-            : String(item.price);
-        const availability = item.available === false ? "unavailable" : "available";
-        return `- ${item.name} (${p}, ${availability})`;
-      });
-
-    return topItems.length ? `Here are some menu items:\n${topItems.join("\n")}` : null;
-  }
   // eslint-disable-next-line sonarjs/cognitive-complexity
   function tryAnswerFromFaq({ text, faqs, intent = null }) {
     if (!Array.isArray(faqs) || faqs.length === 0) return null;
@@ -716,7 +708,6 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
     const checks = [
       tryAnswerFromHours({ text, hours: knowledge.hours, timeZone, intent }),
       tryAnswerFromProfile({ text, profile: knowledge.profile, intent }),
-      tryAnswerFromMenu({ text, menuItems: knowledge.menuItems, intent }),
       tryAnswerFromFaq({ text, faqs: knowledge.faqs, intent }),
       tryAnswerFromKnowledgeBase({ text, knowledgeBase: knowledge.knowledgeBase, intent }),
       tryAnswerFromBookingRules({ text, bookingRules: knowledge.bookingRules, intent }),
@@ -975,7 +966,6 @@ export function createKnowledgeAnsweringService({ supabaseAdmin }) {
     isSimpleKnowledgeEligibleMessage,
     tryAnswerFromHours,
     tryAnswerFromProfile,
-    tryAnswerFromMenu,
     tryAnswerFromFaq,
     tryAnswerFromKnowledgeBase,
     tryAnswerFromBookingRules,
