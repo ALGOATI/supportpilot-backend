@@ -176,7 +176,6 @@ import {
   const conversationStoreService = createConversationStoreService({ supabaseAdmin });
   const {
     getConversationByIdForUser,
-    updateConversationManualMode,
     getOrCreateConversationMap,
     upsertConversationRecord,
     buildLegacyConversations,
@@ -184,7 +183,6 @@ import {
 
   const whatsappService = createWhatsAppService({
     supabaseAdmin,
-    updateConversationManualMode,
     learnFromHumanReply,
   });
   const {
@@ -285,7 +283,6 @@ import {
       getConversationByIdForUser,
       upsertConversationRecord,
       insertMessageWithFallback,
-      updateConversationManualMode,
       getOrCreateConversationMap,
       reserveWhatsAppInboundMessage,
       loadBusinessTimezone,
@@ -321,7 +318,6 @@ import {
       getConversationByIdForUser,
       insertMessageWithFallback,
       upsertConversationRecord,
-      updateConversationManualMode,
       detectFlowIntentOverride,
       detectPreferredReplyLanguage,
       saveConversationPreferredLanguage,
@@ -405,7 +401,6 @@ import {
       buildLegacyConversations,
       detectConversationTags,
       buildConversationTitle,
-      updateConversationManualMode,
       getConversationByIdForUser,
       getClientWhatsAppConfig,
       learnFromHumanReply,

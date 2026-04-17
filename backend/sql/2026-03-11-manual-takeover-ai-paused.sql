@@ -1,7 +1,4 @@
 alter table public.conversations
-add column if not exists manual_mode boolean not null default false;
-
-alter table public.conversations
 add column if not exists ai_paused boolean not null default false;
 
 update public.conversations

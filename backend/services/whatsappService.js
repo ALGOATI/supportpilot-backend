@@ -3,7 +3,7 @@
   conversation lookup, inbound deduping, message sending, owner-side
   forwarding, and owner reply handling.
 ================================ */
-export function createWhatsAppService({ supabaseAdmin, updateConversationManualMode, learnFromHumanReply }) {
+export function createWhatsAppService({ supabaseAdmin, learnFromHumanReply }) {
   // --- Multi-client WhatsApp helpers ---
 
   async function getClientWhatsAppConfig(userId) {
@@ -106,46 +106,19 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
   }
 
   async function getPausedWhatsAppConversations(userId) {
-    const withAiPaused = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("conversations")
-      .select("id,status,state,manual_mode,ai_paused,external_user_id,external_conversation_id,last_message_at")
+      .select("id,status,state,ai_paused,external_user_id,external_conversation_id,last_message_at")
       .eq("user_id", userId)
       .eq("channel", "whatsapp")
       .order("last_message_at", { ascending: false })
       .limit(50);
 
-    let rows = withAiPaused.data || [];
-    if (withAiPaused.error) {
-      const errText = String(withAiPaused.error.message || "").toLowerCase();
-      if (
-        !errText.includes("ai_paused") &&
-        !errText.includes("manual_mode") &&
-        !errText.includes("state") &&
-        !errText.includes(SCHEMA_CACHE_TEXT) &&
-        !errText.includes(DOES_NOT_EXIST_TEXT)
-      ) {
-        throw new Error(withAiPaused.error.message);
-      }
-      const fallback = await supabaseAdmin
-        .from("conversations")
-        .select("id,status,external_user_id,external_conversation_id,last_message_at")
-        .eq("user_id", userId)
-        .eq("channel", "whatsapp")
-        .order("last_message_at", { ascending: false })
-        .limit(50);
-      if (fallback.error) throw new Error(fallback.error.message);
-      rows = (fallback.data || []).map((row) => ({
-        ...row,
-        state: row?.status === "escalated" ? "human_mode" : "idle",
-        manual_mode: row?.status === "escalated",
-        ai_paused: row?.status === "escalated",
-      }));
-    }
+    if (error) throw new Error(error.message);
 
-    return rows.filter(
+    return (data || []).filter(
       (row) =>
         row?.ai_paused === true ||
-        row?.manual_mode === true ||
         row?.status === "escalated" ||
         row?.state === "human_mode"
     );
@@ -311,7 +284,6 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
       .update({
         status: nextStatus,
         state: "human_mode",
-        manual_mode: true,
         ai_paused: true,
         last_message_at: nowIso,
         last_message_preview: String(incomingText).slice(0, 280),
@@ -320,17 +292,7 @@ export function createWhatsAppService({ supabaseAdmin, updateConversationManualM
       .eq("id", conversation.id)
       .eq("user_id", userId);
 
-    if (convoErr) {
-      const fallbackErr = await updateConversationManualMode({
-        userId,
-        conversationId: conversation.id,
-        manualMode: true,
-        statusOverride: nextStatus,
-        stateOverride: "human_mode",
-        lastMessagePreview: incomingText,
-      });
-      if (fallbackErr) throw new Error(fallbackErr.message || "Failed to update conversation");
-    }
+    if (convoErr) throw new Error(convoErr.message || "Failed to update conversation");
 
     // Learn from the owner's reply so future questions get answered automatically
     if (typeof learnFromHumanReply === "function") {

@@ -19,7 +19,6 @@ type ConversationRow = {
   last_message_preview: string;
   intent: "booking" | "faq" | "complaint" | "other";
   priority: "low" | "normal" | "high";
-  manual_mode?: boolean;
   ai_paused?: boolean;
 };
 
@@ -324,7 +323,6 @@ export default function InboxContent() {
               next.priority === "low" || next.priority === "normal" || next.priority === "high"
                 ? next.priority
                 : "normal",
-            manual_mode: Boolean((next as { manual_mode?: boolean } | null)?.manual_mode),
             ai_paused: Boolean((next as { ai_paused?: boolean } | null)?.ai_paused),
           };
 
@@ -396,7 +394,6 @@ export default function InboxContent() {
               last_message_preview: preview,
               intent: conv?.intent || "other",
               priority: conv?.priority || "normal",
-              manual_mode: Boolean(conv?.manual_mode),
               ai_paused: Boolean(conv?.ai_paused),
             });
           }
@@ -530,7 +527,6 @@ export default function InboxContent() {
               ? {
                   ...row,
                   status: updated.status,
-                  manual_mode: Boolean(updated.manual_mode),
                   ai_paused: Boolean(updated.ai_paused),
                 }
               : row
@@ -588,7 +584,6 @@ export default function InboxContent() {
       if (updated) {
         upsertConversation({
           ...updated,
-          manual_mode: Boolean(updated.manual_mode),
           ai_paused: Boolean(updated.ai_paused),
         });
       } else {
@@ -734,7 +729,6 @@ export default function InboxContent() {
                       {updatingStatus ? tr("loading") : tr("resume_ai")}
                     </button>
                     {selectedConversation?.status === "escalated" ||
-                    selectedConversation?.manual_mode ||
                     selectedConversation?.ai_paused ? (
                       <button
                         className={styles.button}
@@ -744,8 +738,7 @@ export default function InboxContent() {
                         {tr("open_in_escalated")}
                       </button>
                     ) : null}
-                    {!selectedConversation?.manual_mode &&
-                    !selectedConversation?.ai_paused &&
+                    {!selectedConversation?.ai_paused &&
                     selectedConversation?.status !== "escalated" ? (
                       <button
                         className={styles.button}
@@ -756,7 +749,7 @@ export default function InboxContent() {
                       </button>
                     ) : null}
                   </div>
-                  {selectedConversation?.manual_mode || selectedConversation?.ai_paused ? (
+                  {selectedConversation?.ai_paused ? (
                     <div className={styles.muted}>{tr("human_handling")}</div>
                   ) : null}
                 </div>

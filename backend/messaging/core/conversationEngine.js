@@ -765,7 +765,6 @@ ${business}
 
     if (
       existingConversation?.status === "escalated" ||
-      existingConversation?.manual_mode === true ||
       existingConversation?.ai_paused === true ||
       existingConversation?.state === "human_mode"
     ) {
@@ -799,7 +798,6 @@ ${business}
         statusOverride: existingConversation?.status === "escalated" ? "escalated" : "open",
         priorityOverride: existingConversation?.priority === "high" ? "high" : null,
         stateOverride:
-          existingConversation?.manual_mode === true ||
           existingConversation?.ai_paused === true ||
           existingConversation?.state === "human_mode"
             ? "human_mode"

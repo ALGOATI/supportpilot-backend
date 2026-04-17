@@ -3,7 +3,6 @@ export function createConversationStore(deps) {
     getConversationByIdForUser: deps.getConversationByIdForUser,
     upsertConversationRecord: deps.upsertConversationRecord,
     insertMessageWithFallback: deps.insertMessageWithFallback,
-    updateConversationManualMode: deps.updateConversationManualMode,
     getOrCreateConversationMap: deps.getOrCreateConversationMap,
     reserveWhatsAppInboundMessage: deps.reserveWhatsAppInboundMessage,
     loadBusinessTimezone: deps.loadBusinessTimezone,

@@ -29,7 +29,6 @@ export function createConversationsRouter({
   buildLegacyConversations,
   detectConversationTags,
   buildConversationTitle,
-  updateConversationManualMode,
   getConversationByIdForUser,
   getClientWhatsAppConfig,
   learnFromHumanReply,
@@ -304,7 +303,7 @@ export function createConversationsRouter({
       const { data, error } = await supabaseAdmin
         .from("conversations")
         .select(
-          "id,user_id,channel,external_conversation_id,external_user_id,title,status,state,last_message_at,last_message_preview,intent,priority,manual_mode,ai_paused,created_at,updated_at"
+          "id,user_id,channel,external_conversation_id,external_user_id,title,status,state,last_message_at,last_message_preview,intent,priority,ai_paused,created_at,updated_at"
         )
         .eq("user_id", req.user.id)
         .order("last_message_at", { ascending: false })
@@ -338,7 +337,7 @@ export function createConversationsRouter({
         supabaseAdmin
           .from("conversations")
           .select(
-            "id,user_id,channel,external_conversation_id,external_user_id,title,status,state,last_message_at,last_message_preview,intent,priority,manual_mode,created_at,updated_at"
+            "id,user_id,channel,external_conversation_id,external_user_id,title,status,state,last_message_at,last_message_preview,intent,priority,ai_paused,created_at,updated_at"
           )
           .eq("user_id", userId)
           .eq("status", "escalated")
@@ -381,7 +380,7 @@ export function createConversationsRouter({
         const { data: extraConversations, error: extraErr } = await supabaseAdmin
           .from("conversations")
           .select(
-            "id,user_id,channel,external_conversation_id,external_user_id,title,status,state,last_message_at,last_message_preview,intent,priority,manual_mode,created_at,updated_at"
+            "id,user_id,channel,external_conversation_id,external_user_id,title,status,state,last_message_at,last_message_preview,intent,priority,ai_paused,created_at,updated_at"
           )
           .eq("user_id", userId)
           .in("id", missingConversationIds.slice(0, 500));
@@ -506,7 +505,6 @@ export function createConversationsRouter({
           channel: latest?.channel || "dashboard",
           external_conversation_id: mapRow?.external_conversation_id || null,
           external_user_id: mapRow?.external_user_id || null,
-          manual_mode: false,
           ai_paused: false,
           last_message_at: latest?.created_at || data[0]?.created_at,
           last_message_preview:
@@ -591,7 +589,6 @@ export function createConversationsRouter({
         .update({
           status: nextStatus,
           state: "human_mode",
-          manual_mode: true,
           ai_paused: true,
           last_message_at: nowIso,
           last_message_preview: message.slice(0, 280),
@@ -600,17 +597,7 @@ export function createConversationsRouter({
         .eq("id", conversationId)
         .eq("user_id", req.user.id);
 
-      if (convoUpdateErr) {
-        const fallbackErr = await updateConversationManualMode({
-          userId: req.user.id,
-          conversationId,
-          manualMode: true,
-          statusOverride: nextStatus,
-          stateOverride: "human_mode",
-          lastMessagePreview: message,
-        });
-        if (fallbackErr) return res.status(500).json({ error: fallbackErr.message });
-      }
+      if (convoUpdateErr) return res.status(500).json({ error: convoUpdateErr.message });
 
       let learning = { learned: false, reason: "skipped" };
       try {
@@ -657,15 +644,12 @@ export function createConversationsRouter({
         patch.status = status;
         if (status === "resolved") {
           patch.state = "resolved";
-          patch.manual_mode = false;
           patch.ai_paused = false;
         } else if (status === "escalated") {
           patch.state = "human_mode";
-          patch.manual_mode = true;
           patch.ai_paused = true;
         } else if (status === "open" || status === "waiting_customer") {
           patch.state = "idle";
-          patch.manual_mode = false;
           patch.ai_paused = false;
         }
       }
@@ -725,7 +709,6 @@ export function createConversationsRouter({
         const { error } = await supabaseAdmin
           .from("conversations")
           .update({
-            manual_mode: false,
             ai_paused: false,
             status: nextStatus,
             state: nextStatus === "resolved" ? "resolved" : "idle",
@@ -734,16 +717,7 @@ export function createConversationsRouter({
           .eq("id", conversationId)
           .eq("user_id", req.user.id);
 
-        if (error) {
-          const fallbackErr = await updateConversationManualMode({
-            userId: req.user.id,
-            conversationId,
-            manualMode: false,
-            statusOverride: nextStatus,
-            stateOverride: nextStatus === "resolved" ? "resolved" : "idle",
-          });
-          if (fallbackErr) return res.status(500).json({ error: fallbackErr.message });
-        }
+        if (error) return res.status(500).json({ error: error.message });
 
         const { data: refreshed, error: readErr } = await supabaseAdmin
           .from("conversations")
@@ -789,7 +763,6 @@ export function createConversationsRouter({
         .update({
           status: nextStatus,
           state: nextState,
-          manual_mode: nextStatus === "escalated",
           ai_paused: nextStatus === "escalated",
           updated_at: new Date().toISOString(),
         })

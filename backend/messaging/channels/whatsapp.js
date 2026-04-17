@@ -178,7 +178,6 @@ export function createWhatsAppAdapter(deps) {
       .update({
         status: nextStatus,
         state: "human_mode",
-        manual_mode: true,
         ai_paused: true,
         last_message_at: nowIso,
         last_message_preview: String(incomingText).slice(0, 280),
@@ -187,17 +186,7 @@ export function createWhatsAppAdapter(deps) {
       .eq("id", conversation.id)
       .eq("user_id", userId);
 
-    if (convoErr) {
-      const fallbackErr = await store.updateConversationManualMode({
-        userId,
-        conversationId: conversation.id,
-        manualMode: true,
-        statusOverride: nextStatus,
-        stateOverride: "human_mode",
-        lastMessagePreview: incomingText,
-      });
-      if (fallbackErr) throw new Error(fallbackErr.message || "Failed to update conversation");
-    }
+    if (convoErr) throw new Error(convoErr.message || "Failed to update conversation");
 
     // Learn from the owner's reply so future questions get answered automatically
     if (typeof learnFromHumanReply === "function") {

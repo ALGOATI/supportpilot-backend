@@ -1,9 +1,5 @@
 import crypto from "node:crypto";
 import {
-  SCHEMA_CACHE_TEXT,
-  DOES_NOT_EXIST_TEXT,
-} from "../config/constants.js";
-import {
   detectConversationTags,
   buildConversationTitle,
   buildRuleBasedConversationTitle,
@@ -14,8 +10,7 @@ import {
 
 /* ================================
   Conversation store: read/write helpers around the conversations,
-  conversation_map, and messages tables. Includes schema-tolerant
-  fallbacks for the manual_mode/ai_paused/state columns and the legacy
+  conversation_map, and messages tables. Also provides the legacy
   buildLegacyConversations aggregator used by /api/conversations when
   the conversations table is empty.
 ================================ */
@@ -29,89 +24,18 @@ export function createConversationStoreService({ supabaseAdmin }) {
   ]);
 
   async function getConversationByIdForUser({ userId, conversationId }) {
-    const withManualMode = await supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from("conversations")
-      .select("id,status,priority,intent,manual_mode,ai_paused,state")
+      .select("id,status,priority,intent,ai_paused,state")
       .eq("id", conversationId)
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (!withManualMode.error) {
-      return withManualMode.data || null;
+    if (error) {
+      throw new Error(error.message);
     }
 
-    const errText = String(withManualMode.error.message || "").toLowerCase();
-    if (!errText.includes("manual_mode") && !errText.includes("ai_paused")) {
-      throw new Error(withManualMode.error.message);
-    }
-
-    const fallback = await supabaseAdmin
-      .from("conversations")
-      .select("id,status,priority,intent")
-      .eq("id", conversationId)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (fallback.error) {
-      throw new Error(fallback.error.message);
-    }
-
-    return fallback.data
-      ? { ...fallback.data, manual_mode: false, ai_paused: false, state: "idle" }
-      : null;
-  }
-
-  async function updateConversationManualMode({
-    userId,
-    conversationId,
-    manualMode,
-    statusOverride = null,
-    stateOverride = null,
-    lastMessagePreview = undefined,
-  }) {
-    const nowIso = new Date().toISOString();
-    const patch = {
-      manual_mode: Boolean(manualMode),
-      ai_paused: Boolean(manualMode),
-      updated_at: nowIso,
-    };
-    if (statusOverride) patch.status = statusOverride;
-    if (stateOverride && VALID_CONVERSATION_STATES.has(stateOverride)) {
-      patch.state = stateOverride;
-    }
-    if (lastMessagePreview !== undefined) {
-      patch.last_message_at = nowIso;
-      patch.last_message_preview = String(lastMessagePreview || "").slice(0, 280);
-    }
-
-    let { error } = await supabaseAdmin
-      .from("conversations")
-      .update(patch)
-      .eq("id", conversationId)
-      .eq("user_id", userId);
-
-    if (!error) return null;
-
-    const errText = String(error.message || "").toLowerCase();
-    if (!errText.includes("manual_mode") && !errText.includes("ai_paused")) return error;
-
-    const fallbackPatch = { updated_at: nowIso };
-    if (statusOverride) fallbackPatch.status = statusOverride;
-    if (stateOverride && VALID_CONVERSATION_STATES.has(stateOverride)) {
-      fallbackPatch.state = stateOverride;
-    }
-    if (lastMessagePreview !== undefined) {
-      fallbackPatch.last_message_at = nowIso;
-      fallbackPatch.last_message_preview = String(lastMessagePreview || "").slice(0, 280);
-    }
-
-    const retry = await supabaseAdmin
-      .from("conversations")
-      .update(fallbackPatch)
-      .eq("id", conversationId)
-      .eq("user_id", userId);
-
-    return retry.error || null;
+    return data || null;
   }
 
   // eslint-disable-next-line sonarjs/cognitive-complexity
@@ -281,53 +205,20 @@ export function createConversationStoreService({ supabaseAdmin }) {
       text: firstMessage,
     });
 
-    let existing = null;
-    const withAutomationColumns = await supabaseAdmin
+    const { data: existingRow, error: existingErr } = await supabaseAdmin
       .from("conversations")
       .select(
-        "id, title, status, priority, intent, external_conversation_id, external_user_id, manual_mode, ai_paused, state"
+        "id, title, status, priority, intent, external_conversation_id, external_user_id, ai_paused, state"
       )
       .eq("id", conversationId)
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (withAutomationColumns.error) {
-      const errText = String(withAutomationColumns.error.message || "").toLowerCase();
-      const canFallback =
-        errText.includes("manual_mode") ||
-        errText.includes("ai_paused") ||
-        errText.includes("state") ||
-        errText.includes(SCHEMA_CACHE_TEXT) ||
-        errText.includes(DOES_NOT_EXIST_TEXT);
-
-      if (!canFallback) {
-        throw new Error(withAutomationColumns.error.message);
-      }
-
-      const fallback = await supabaseAdmin
-        .from("conversations")
-        .select(
-          "id, title, status, priority, intent, external_conversation_id, external_user_id"
-        )
-        .eq("id", conversationId)
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (fallback.error) {
-        throw new Error(fallback.error.message);
-      }
-
-      existing = fallback.data
-        ? {
-            ...fallback.data,
-            manual_mode: false,
-            ai_paused: false,
-            state: "idle",
-          }
-        : null;
-    } else {
-      existing = withAutomationColumns.data || null;
+    if (existingErr) {
+      throw new Error(existingErr.message);
     }
+
+    const existing = existingRow || null;
 
     const ruleTitle = buildRuleBasedConversationTitle({
       text: firstMessage,
@@ -366,9 +257,7 @@ export function createConversationStoreService({ supabaseAdmin }) {
       normalizedState = existing.state;
     }
     const shouldPauseAi =
-      existing?.ai_paused === true ||
-      existing?.manual_mode === true ||
-      statusOverride === "escalated";
+      existing?.ai_paused === true || statusOverride === "escalated";
 
     let resolvedIntent = intent;
     const isValidIntentOverride =
@@ -382,7 +271,7 @@ export function createConversationStoreService({ supabaseAdmin }) {
       resolvedIntent = "booking";
     }
 
-    const basePayload = {
+    const upsertPayload = {
       id: conversationId,
       user_id: userId,
       channel,
@@ -395,43 +284,17 @@ export function createConversationStoreService({ supabaseAdmin }) {
       last_message_preview: String(lastMessagePreview || "").slice(0, 280),
       intent: resolvedIntent,
       priority: priorityOverride || computedPriority,
-      manual_mode: existing?.manual_mode === true,
       ai_paused: shouldPauseAi,
+      state: normalizedState,
       updated_at: now,
     };
 
-    let upsertPayload = {
-      ...basePayload,
-      state: normalizedState,
-    };
-
-    let { error: upsertErr } = await supabaseAdmin
+    const { error: upsertErr } = await supabaseAdmin
       .from("conversations")
       .upsert(upsertPayload, { onConflict: "id" });
 
     if (upsertErr) {
-      const errText = String(upsertErr.message || "").toLowerCase();
-      if (
-        !errText.includes("state") &&
-        !errText.includes("ai_paused") &&
-        !errText.includes("manual_mode")
-      ) {
-        throw new Error(upsertErr.message);
-      }
-      upsertPayload = { ...basePayload };
-      if (errText.includes("ai_paused")) {
-        delete upsertPayload.ai_paused;
-      }
-      if (errText.includes("manual_mode")) {
-        delete upsertPayload.manual_mode;
-      }
-      const retry = await supabaseAdmin
-        .from("conversations")
-        .upsert(upsertPayload, { onConflict: "id" });
-      upsertErr = retry.error;
-      if (upsertErr) {
-        throw new Error(upsertErr.message);
-      }
+      throw new Error(upsertErr.message);
     }
   }
 
@@ -519,7 +382,7 @@ export function createConversationStoreService({ supabaseAdmin }) {
           last_message_preview: row.customer_message || row.ai_reply || row.human_reply || "—",
           intent,
           priority,
-          manual_mode: false,
+          ai_paused: false,
           created_at: row.created_at,
           updated_at: row.created_at,
         });
@@ -534,7 +397,6 @@ export function createConversationStoreService({ supabaseAdmin }) {
   return {
     VALID_CONVERSATION_STATES,
     getConversationByIdForUser,
-    updateConversationManualMode,
     getOrCreateConversationMap,
     upsertConversationRecord,
     buildLegacyConversations,

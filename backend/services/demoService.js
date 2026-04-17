@@ -288,7 +288,7 @@ export function createDemoService({
   }
 
   async function insertDemoConversationRow(row) {
-    const base = {
+    const payload = {
       id: row.id,
       user_id: row.user_id,
       channel: row.channel,
@@ -302,41 +302,15 @@ export function createDemoService({
       priority: row.priority,
       created_at: row.created_at,
       updated_at: row.updated_at,
-      manual_mode: row.manual_mode,
+      ai_paused: row.ai_paused,
       state: row.state,
     };
 
-    let payload = { ...base };
-    let { error } = await supabaseAdmin
+    const { error } = await supabaseAdmin
       .from("conversations")
       .upsert(payload, { onConflict: "id" });
 
-    if (!error) return;
-
-    const errText = String(error.message || "").toLowerCase();
-    if (errText.includes("manual_mode")) {
-      const retryPayload = { ...payload };
-      delete retryPayload.manual_mode;
-      const retry = await supabaseAdmin
-        .from("conversations")
-        .upsert(retryPayload, { onConflict: "id" });
-      error = retry.error;
-      payload = retryPayload;
-      if (!error) return;
-    }
-
-    const errText2 = String(error?.message || "").toLowerCase();
-    if (errText2.includes("state")) {
-      const retryPayload = { ...payload };
-      delete retryPayload.state;
-      const retry = await supabaseAdmin
-        .from("conversations")
-        .upsert(retryPayload, { onConflict: "id" });
-      error = retry.error;
-      if (!error) return;
-    }
-
-    throw new Error(error.message);
+    if (error) throw new Error(error.message);
   }
 
   async function generateDemoConversations({ userId, count = 12 }) {
@@ -371,7 +345,7 @@ export function createDemoService({
         last_message_preview: lastPreview,
         intent: scenario.intent || "other",
         priority: scenario.priority || "normal",
-        manual_mode: isEscalated,
+        ai_paused: isEscalated,
         state: scenario.state || (isEscalated ? "human_mode" : "idle"),
         created_at: startIso,
         updated_at: endIso,

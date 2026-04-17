@@ -10,7 +10,7 @@ export const BOOKING_SELECT_FIELDS =
 export const QUEUED_JOB_SELECT_FIELDS =
   "id,user_id,conversation_id,channel,customer_message,status,attempts,created_at";
 export const CONVERSATION_DETAIL_SELECT_FIELDS =
-  "id,title,status,state,priority,intent,channel,external_conversation_id,external_user_id,last_message_at,last_message_preview,manual_mode,ai_paused";
+  "id,title,status,state,priority,intent,channel,external_conversation_id,external_user_id,last_message_at,last_message_preview,ai_paused";
 export const MENU_EXTRACTION_ERROR_MESSAGE = "Could not extract menu. Try another photo.";
 export const CONVERSATION_NOT_FOUND_MESSAGE = "Conversation not found";
 export const ESCALATION_REPLY_MESSAGE =
