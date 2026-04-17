@@ -267,6 +267,12 @@ export function createWhatsAppAdapter(deps) {
         phoneNumberId,
       });
 
+      const timings = {};
+      const t0 = Date.now();
+      const markStage = (label) => {
+        timings[label] = Date.now() - t0;
+      };
+
       let stage = "resolveClientByPhoneNumberId";
       try {
         stage = "resolveBusinessOwnerByPhone";
@@ -332,6 +338,7 @@ export function createWhatsAppAdapter(deps) {
           });
           continue;
         }
+        markStage("resolveTenantMs");
         console.log("[WA DEBUG] webhook:chosen_clientId", { from, clientId });
 
         stage = "dedupeInboundMessage";
@@ -372,6 +379,7 @@ export function createWhatsAppAdapter(deps) {
         }
 
         stage = "handleIncomingMessage";
+        const engineStartMs = Date.now();
         const result = await engine.handleIncomingMessage({
           userId: clientId,
           channel: "whatsapp",
@@ -380,6 +388,10 @@ export function createWhatsAppAdapter(deps) {
           text: incomingText,
           shouldSendExternalReply: true,
         });
+        timings.engineHandleMs = Date.now() - engineStartMs;
+        if (result?.timings) {
+          Object.assign(timings, result.timings);
+        }
 
         if (result.reply && String(result.reply).trim()) {
           stage = "sendWhatsAppTextMessage";
@@ -387,7 +399,9 @@ export function createWhatsAppAdapter(deps) {
           const clientConfig = getClientWhatsAppConfig
             ? await getClientWhatsAppConfig(clientId)
             : null;
+          const sendStartMs = Date.now();
           await sendWhatsAppTextMessage({ to: from, text: result.reply, clientConfig });
+          timings.sendMetaMs = Date.now() - sendStartMs;
 
           // Increment usage counter after a successful AI reply is delivered
           if (typeof incrementMonthlyUsage === "function") {
@@ -413,6 +427,13 @@ export function createWhatsAppAdapter(deps) {
         console.error("WhatsApp message handling failed:", {
           stage,
           error: innerErr?.message || innerErr,
+        });
+      } finally {
+        timings.totalMs = Date.now() - t0;
+        console.log("[WA TIMING] webhook:event_summary", {
+          from,
+          metaMessageId,
+          ...timings,
         });
       }
     }

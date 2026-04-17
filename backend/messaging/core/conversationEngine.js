@@ -23,6 +23,7 @@ export function createConversationEngine(deps) {
     upsertConversationRecord,
     detectFlowIntentOverride,
     detectPreferredReplyLanguage,
+    detectConversationEndingIntent,
     saveConversationPreferredLanguage,
     loadConversationPreferredLanguage,
     loadUserPlan,
@@ -322,6 +323,17 @@ export function createConversationEngine(deps) {
       return { isClosing: true, languageCode: startedByClosing[1] };
     }
 
+    if (
+      typeof detectConversationEndingIntent === "function" &&
+      detectConversationEndingIntent(text)
+    ) {
+      const languageCode =
+        typeof detectPreferredReplyLanguage === "function"
+          ? detectPreferredReplyLanguage(text)
+          : null;
+      return { isClosing: true, languageCode };
+    }
+
     return { isClosing: false, languageCode: null };
   }
 
@@ -436,11 +448,14 @@ export function createConversationEngine(deps) {
     suppressActiveBookingContext = false,
     latestIntentHint = null,
   }) {
+    const timings = {};
+    const settingsStartMs = Date.now();
     const { data: settings, error: dbError } = await supabaseAdmin
       .from("client_settings")
       .select("business, plan, tone, reply_length")
       .eq("user_id", userId)
       .maybeSingle();
+    timings.settingsDbMs = Date.now() - settingsStartMs;
 
     if (dbError) {
       throw new Error(`Database error: ${dbError.message}`);
@@ -473,7 +488,9 @@ export function createConversationEngine(deps) {
     const knowledgePromptCharBudget = getKnowledgePromptCharBudget(plan);
     const businessTimezone = await loadBusinessTimezone(userId);
     const todayIsoDate = getTodayIsoDateInTimezone(businessTimezone);
+    const structuredStartMs = Date.now();
     const structuredKnowledge = await loadStructuredBusinessKnowledge(userId);
+    timings.structuredKnowledgeMs = Date.now() - structuredStartMs;
     let activeBookingDraft = null;
     if (!suppressActiveBookingContext) {
       try {
@@ -494,11 +511,13 @@ export function createConversationEngine(deps) {
     const activeBookingContext = includeBookingContext
       ? buildActiveBookingDraftContext(activeBookingDraft)
       : "";
+    const learnedStartMs = Date.now();
     const learnedKnowledgeContext = await loadKnowledgeBaseForPrompt(userId, {
       userMessage,
       maxItems: knowledgePromptItemLimit,
       maxChars: knowledgePromptCharBudget,
     });
+    timings.learnedKnowledgeMs = Date.now() - learnedStartMs;
     const business = structuredKnowledge.hasStructuredData
       ? structuredKnowledge.businessContext
       : fallbackBusiness;
@@ -597,6 +616,7 @@ Language:
 - Preferred reply language for this conversation: ${preferredLanguageName || "Not set"}.
 - If preferred language is set, reply in that language unless the user asks to change it.
 - If preferred language is not set, mirror the user's latest language when clear.
+- Never mix scripts within a single word. When mentioning a menu item name in an Arabic reply, either transliterate the whole name into Arabic script (e.g. "كباب رولة") OR keep the whole name in its original Latin form (e.g. "Kebab rulle"). Never write hybrid forms like "كebab rulle" or "سندويش كebab". The same rule applies when a Latin-script reply references Arabic-named items.
 
 Date context:
 - Today (ISO): ${todayIsoDate}
@@ -618,6 +638,7 @@ Business info:
 ${business}
     `.trim();
 
+    const llmStartMs = Date.now();
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -637,6 +658,7 @@ ${business}
         max_tokens: replyTokenCap,
       }),
     });
+    timings.llmMainMs = Date.now() - llmStartMs;
 
     if (!resp.ok) {
       const errText = await resp.text();
@@ -650,6 +672,7 @@ ${business}
     const reply = data?.choices?.[0]?.message?.content?.trim() || "Sorry, I couldn't generate a reply.";
 
     let extractedData = { ...EMPTY_EXTRACTION };
+    const extractStartMs = Date.now();
     try {
       extractedData = await extractStructuredData({
         model: extractionModel,
@@ -665,6 +688,7 @@ ${business}
     } catch (extractErr) {
       console.error("Extraction failed:", extractErr?.message || extractErr);
     }
+    timings.llmExtractionMs = Date.now() - extractStartMs;
 
     return {
       reply,
@@ -686,6 +710,7 @@ ${business}
         totalTokens: usage.totalTokens,
       }),
       extractedData,
+      timings,
     };
   }
   // eslint-disable-next-line sonarjs/cognitive-complexity
@@ -1205,6 +1230,7 @@ ${business}
       usage,
       estimatedCostUsd,
       extractedData,
+      timings: aiTimings,
     } = await buildAiReply({
       userId,
       userMessage: normalizedText,
@@ -1402,6 +1428,7 @@ ${business}
       escalationReason: safety.escalationReason,
       escalated: safety.shouldEscalate,
       shouldSendExternalReply: Boolean(shouldSendExternalReply),
+      timings: aiTimings || null,
     };
   }
 

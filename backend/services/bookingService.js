@@ -116,6 +116,28 @@ export function createBookingService({ supabaseAdmin }) {
     return null;
   }
 
+  function detectConversationEndingIntent(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return false;
+    const content = raw.toLowerCase();
+
+    // Keep this narrow: only fire on short, unambiguous closings. A long
+    // message that happens to contain "thanks" is usually still an active turn.
+    const tooLongToBeJustAClosing = content.length > 80;
+    if (tooLongToBeJustAClosing) return false;
+
+    // English
+    const enClosing = /\b(thanks|thank you|thank you so much|thx|ty|ok thanks|okay thanks|cheers|appreciate it|bye|goodbye|see ya|see you|that'?s all|that is all|all good|no(?:thing)? else|i'?m good|we'?re good|have a good (?:day|night|evening))\b/i;
+
+    // Swedish
+    const svClosing = /(\btack\b|\btack så mycket\b|\btack för hjälpen\b|\bhej då\b|\bvi hörs\b|\bdet var allt\b|\bdet räcker\b|\bingenting mer\b|\bingen mer\b|\bha en (?:bra|trevlig) (?:dag|kväll))/i;
+
+    // Arabic closings (common phrases — order matters: check longer first)
+    const arClosing = /(شكرا جزيلا|شكراً جزيلاً|شكرا لك|شكراً لك|شكرا|شكراً|مشكور|تسلم|الله يعطيك العافية|مع السلامة|الى اللقاء|إلى اللقاء|وداعا|وداعاً|هذا كل شيء|هذا كل شي|ما في شي تاني|لا شيء آخر|خلاص)/;
+
+    return enClosing.test(content) || svClosing.test(content) || arClosing.test(raw);
+  }
+
   function detectFlowIntentOverride(text) {
     const content = String(text || "").toLowerCase();
     if (!content) {
@@ -381,6 +403,7 @@ export function createBookingService({ supabaseAdmin }) {
     detectPreferredReplyLanguage,
     getPreferredLanguagePromptHint,
     detectFlowIntentOverride,
+    detectConversationEndingIntent,
     loadConversationPreferredLanguage,
     saveConversationPreferredLanguage,
     normalizeDraftBookingField,
