@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(python3)",
-      "Bash(node --check server.js)"
+      "Bash(node --check server.js)",
+      "Bash(npx eslint *)"
     ]
   }
 }
