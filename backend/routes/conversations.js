@@ -340,7 +340,8 @@ export function createConversationsRouter({
             "id,user_id,channel,external_conversation_id,external_user_id,title,status,state,last_message_at,last_message_preview,intent,priority,ai_paused,created_at,updated_at"
           )
           .eq("user_id", userId)
-          .eq("status", "escalated")
+          .or("status.eq.escalated,ai_paused.eq.true")
+          .neq("status", "resolved")
           .order("last_message_at", { ascending: false })
           .limit(500),
         supabaseAdmin

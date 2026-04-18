@@ -465,11 +465,13 @@ export function createConversationEngine(deps) {
     const plan = mapPlanToTier(settings?.plan || "starter");
     const tone = settings?.tone || "professional";
     const replyLength = settings?.reply_length || "concise";
+    const aiModelStartMs = Date.now();
     const { data: businessRow } = await supabaseAdmin
       .from("client_settings")
       .select("ai_model")
       .eq("user_id", userId)
       .maybeSingle();
+    timings.aiModelDbMs = Date.now() - aiModelStartMs;
     const rawAiModel = businessRow?.ai_model || "gpt-4o-mini";
     const model = rawAiModel.includes("/") ? rawAiModel : `openai/${rawAiModel}`;
     const extractionModel = getRoutedModel(plan, "extraction") || model;
@@ -486,13 +488,16 @@ export function createConversationEngine(deps) {
     const replyTokenCap = getReplyTokenCap(plan);
     const knowledgePromptItemLimit = getKnowledgePromptItemLimit(plan);
     const knowledgePromptCharBudget = getKnowledgePromptCharBudget(plan);
+    const timezoneStartMs = Date.now();
     const businessTimezone = await loadBusinessTimezone(userId);
+    timings.timezoneDbMs = Date.now() - timezoneStartMs;
     const todayIsoDate = getTodayIsoDateInTimezone(businessTimezone);
     const structuredStartMs = Date.now();
     const structuredKnowledge = await loadStructuredBusinessKnowledge(userId);
     timings.structuredKnowledgeMs = Date.now() - structuredStartMs;
     let activeBookingDraft = null;
     if (!suppressActiveBookingContext) {
+      const draftStartMs = Date.now();
       try {
         activeBookingDraft = await getActiveBookingDraft({
           userId,
@@ -502,6 +507,7 @@ export function createConversationEngine(deps) {
       } catch (bookingDraftErr) {
         console.error("Active booking draft query failed:", bookingDraftErr?.message || bookingDraftErr);
       }
+      timings.activeBookingDraftMs = Date.now() - draftStartMs;
     }
     const includeBookingContext = shouldIncludeBookingContext({
       userMessage,
@@ -531,6 +537,7 @@ export function createConversationEngine(deps) {
     const { toneRule, lengthRule } = styleRules(tone, replyLength);
 
     let history = [];
+    const historyStartMs = Date.now();
     const historyWithHuman = await supabaseAdmin
       .from("messages")
       .select("customer_message, ai_reply, human_reply, extracted_data, created_at")
@@ -560,6 +567,7 @@ export function createConversationEngine(deps) {
       }
       history = (historyWithHuman.data || []).slice().reverse();
     }
+    timings.historyDbMs = Date.now() - historyStartMs;
     history = trimHistoryToActiveSegment(history);
     history = selectRelevantHistoryRows({
       rows: history,
@@ -728,11 +736,15 @@ ${business}
     if (!text || !String(text).trim()) throw new Error("Missing text");
     const normalizedText = String(text).trim();
 
+    const handlerTimings = {};
+
     // Track every inbound message for analytics
     if (typeof incrementMonthlyStat === "function") {
+      const inboundCounterStartMs = Date.now();
       try {
         await incrementMonthlyStat({ businessId: userId, statName: "total_inbound_messages" });
       } catch (_e) { /* non-critical */ }
+      handlerTimings.inboundCounterMs = Date.now() - inboundCounterStartMs;
     }
 
     const _replyStartMs = Date.now();
@@ -745,22 +757,26 @@ ${business}
       if (!externalConversationId) {
         resolvedConversationId = crypto.randomUUID();
       } else {
+        const mapStartMs = Date.now();
         const map = await getOrCreateConversationMap({
           userId,
           channel,
           externalConversationId,
           externalUserId,
         });
+        handlerTimings.conversationMapMs = Date.now() - mapStartMs;
         resolvedConversationId = map.conversationId;
         resolvedExternalConversationId = map.externalConversationId;
         resolvedExternalUserId = map.externalUserId;
       }
     }
 
+    const getConvoStartMs = Date.now();
     const existingConversation = await getConversationByIdForUser({
       userId,
       conversationId: resolvedConversationId,
     });
+    handlerTimings.getConversationMs = Date.now() - getConvoStartMs;
     let usedConversationsThisMonthFromNewConversation = null;
     if (!existingConversation) {
       const monthKey =
@@ -769,6 +785,7 @@ ${business}
         monthKey &&
         typeof reserveConversationUsageAndIncrement === "function"
       ) {
+        const reserveUsageStartMs = Date.now();
         try {
           const nextUsage = await reserveConversationUsageAndIncrement({
             userId,
@@ -785,6 +802,7 @@ ${business}
             usageIncrementErr?.message || usageIncrementErr
           );
         }
+        handlerTimings.reserveUsageMs = Date.now() - reserveUsageStartMs;
       }
     }
 
@@ -868,9 +886,12 @@ ${business}
       };
     }
 
+    const handlerTimezoneStartMs = Date.now();
     const businessTimezone = await loadBusinessTimezone(userId);
+    handlerTimings.handlerTimezoneMs = Date.now() - handlerTimezoneStartMs;
     const flowOverride = detectFlowIntentOverride(normalizedText);
     const detectedLanguage = detectPreferredReplyLanguage(normalizedText);
+    const langStartMs = Date.now();
     if (detectedLanguage) {
       await saveConversationPreferredLanguage({
         userId,
@@ -884,12 +905,17 @@ ${business}
         userId,
         conversationId: resolvedConversationId,
       }));
+    handlerTimings.langDbMs = Date.now() - langStartMs;
 
+    const planStartMs = Date.now();
     const userPlan = await loadUserPlan(userId);
+    handlerTimings.userPlanMs = Date.now() - planStartMs;
     const planLimits = getPlanLimits(userPlan);
+    const maxMessagesStartMs = Date.now();
     const businessMaxMessages = typeof loadBusinessMaxMessages === "function"
       ? await loadBusinessMaxMessages(userId)
       : null;
+    handlerTimings.businessMaxMessagesMs = Date.now() - maxMessagesStartMs;
     const maxMessageChars = Number(planLimits?.maxMessageChars) || 300;
     if (countMessageChars(normalizedText) > maxMessageChars) {
       const lengthLimitReply = "Please shorten your message.";
@@ -1030,11 +1056,13 @@ ${business}
       };
     }
 
+    const directKnowledgeStartMs = Date.now();
     const directKnowledge = await tryDirectKnowledgeAnswer({
       userId,
       userMessage: normalizedText,
       businessTimezone,
     });
+    handlerTimings.directKnowledgeMs = Date.now() - directKnowledgeStartMs;
 
     if (directKnowledge?.reply) {
       const safety = evaluateResponseSafety({
@@ -1221,6 +1249,7 @@ ${business}
       };
     }
 
+    const buildReplyStartMs = Date.now();
     const {
       reply: aiReply,
       plan,
@@ -1241,11 +1270,13 @@ ${business}
       suppressActiveBookingContext: flowOverride.overrideBookingFlow,
       latestIntentHint: flowOverride.intentOverride,
     });
+    handlerTimings.buildAiReplyMs = Date.now() - buildReplyStartMs;
 
     const normalizedExtractedData = normalizeBookingExtractionDate(extractedData, {
       timeZone: businessTimezone,
     });
 
+    const bookingFlowStartMs = Date.now();
     let bookingSignal = false;
     let bookingComplete = false;
     try {
@@ -1320,6 +1351,7 @@ ${business}
     } catch (bookingSyncErr) {
       console.error("Booking draft sync failed:", bookingSyncErr?.message || bookingSyncErr);
     }
+    handlerTimings.bookingFlowMs = Date.now() - bookingFlowStartMs;
 
     const safety = evaluateResponseSafety({
       text: normalizedText,
@@ -1345,6 +1377,7 @@ ${business}
       nextStateOverride = "booking_collecting";
     }
 
+    const insertMsgStartMs = Date.now();
     const { error: logErr } = await insertMessageWithFallback({
       user_id: userId,
       conversation_id: resolvedConversationId,
@@ -1359,9 +1392,11 @@ ${business}
       extracted_data: extractedDataWithSafety,
       escalated: safety.shouldEscalate,
     });
+    handlerTimings.insertMessageMs = Date.now() - insertMsgStartMs;
 
     if (logErr) throw new Error(logErr.message || "Failed to store inbound message");
 
+    const upsertConvoStartMs = Date.now();
     await upsertConversationRecord({
       userId,
       conversationId: resolvedConversationId,
@@ -1376,8 +1411,10 @@ ${business}
       intentOverride: flowOverride.intentOverride,
       stateOverride: nextStateOverride,
     });
+    handlerTimings.upsertConversationMs = Date.now() - upsertConvoStartMs;
 
     if (isEscalationTransition) {
+      const escalationNotifyStartMs = Date.now();
       try {
         await createEscalationNotification({
           userId,
@@ -1389,9 +1426,11 @@ ${business}
       } catch (notifyErr) {
         console.error("Escalation notification failed:", notifyErr?.message || notifyErr);
       }
+      handlerTimings.escalationNotifyMs = Date.now() - escalationNotifyStartMs;
     }
 
     if (typeof incrementMonthlyStat === "function") {
+      const monthlyStatsStartMs = Date.now();
       try {
         await incrementMonthlyStat({ businessId: userId, statName: "ai_messages_sent" });
         if (!existingConversation) {
@@ -1407,6 +1446,7 @@ ${business}
           await incrementMonthlyStat({ businessId: userId, statName: "response_time_count" });
         }
       } catch (_e) { /* non-critical */ }
+      handlerTimings.monthlyStatsMs = Date.now() - monthlyStatsStartMs;
     }
 
     return {
@@ -1428,7 +1468,7 @@ ${business}
       escalationReason: safety.escalationReason,
       escalated: safety.shouldEscalate,
       shouldSendExternalReply: Boolean(shouldSendExternalReply),
-      timings: aiTimings || null,
+      timings: { ...handlerTimings, ...(aiTimings || {}) },
     };
   }
 
