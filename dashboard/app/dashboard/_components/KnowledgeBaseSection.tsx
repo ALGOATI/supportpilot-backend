@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { getBackendUrl } from "@/lib/backend-url";
+import { useToast } from "./Toast";
+import { primaryBtnStyle, secondaryBtnStyle, dangerBtnStyle, EmptyState } from "./ui";
 
 type KnowledgeRow = {
   id: string;
@@ -17,6 +19,7 @@ type KnowledgeRow = {
 
 export default function KnowledgeBaseSection() {
   const router = useRouter();
+  const { notify } = useToast();
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [rows, setRows] = useState<KnowledgeRow[]>([]);
@@ -69,10 +72,19 @@ export default function KnowledgeBaseSection() {
     void loadKnowledgeLimit();
   }, [loadRows, loadKnowledgeLimit]);
 
+  const focusAddForm = useCallback(() => {
+    if (typeof document === "undefined") return;
+    const el = document.getElementById("kb-new-question") as HTMLInputElement | null;
+    el?.focus();
+  }, []);
+
   async function addManualEntry() {
     const question = newQuestion.trim();
     const answer = newAnswer.trim();
-    if (!question || !answer) return;
+    if (!question || !answer) {
+      notify("Both question and answer are required.", "error");
+      return;
+    }
 
     if (knowledgeLimit?.limitReached) return;
 
@@ -101,8 +113,11 @@ export default function KnowledgeBaseSection() {
       setNewAnswer("");
       await loadRows();
       await loadKnowledgeLimit();
+      notify("Entry added");
     } catch (e) {
       console.error(e);
+      const message = e instanceof Error ? e.message : "Failed to add entry";
+      notify(message, "error");
     } finally {
       setSavingId(null);
     }
@@ -126,8 +141,11 @@ export default function KnowledgeBaseSection() {
 
       if (error) throw error;
       await loadRows();
+      notify("Entry saved");
     } catch (e) {
       console.error(e);
+      const message = e instanceof Error ? e.message : "Failed to save entry";
+      notify(message, "error");
     } finally {
       setSavingId(null);
     }
@@ -140,8 +158,11 @@ export default function KnowledgeBaseSection() {
       if (error) throw error;
       await loadRows();
       await loadKnowledgeLimit();
+      notify("Entry deleted");
     } catch (e) {
       console.error(e);
+      const message = e instanceof Error ? e.message : "Failed to delete entry";
+      notify(message, "error");
     } finally {
       setSavingId(null);
     }
@@ -149,8 +170,10 @@ export default function KnowledgeBaseSection() {
 
   return (
     <div>
-      <div style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 12, background: "white" }}>
-        <h2 style={{ marginTop: 0, fontSize: 18 }}>Add manual knowledge</h2>
+      <div style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 14, background: "#fbfcff" }}>
+        <h3 style={{ marginTop: 0, marginBottom: 10, fontSize: 14, fontWeight: 800, color: "#0f172a" }}>
+          Add manual knowledge
+        </h3>
 
         {knowledgeLimit && knowledgeLimit.max > 0 && (
           <div style={{
@@ -170,6 +193,7 @@ export default function KnowledgeBaseSection() {
 
         <div style={{ display: "grid", gap: 10 }}>
           <input
+            id="kb-new-question"
             value={newQuestion}
             onChange={(e) => setNewQuestion(e.target.value)}
             placeholder="Question"
@@ -184,28 +208,36 @@ export default function KnowledgeBaseSection() {
             style={field}
             disabled={!!knowledgeLimit?.limitReached}
           />
-          <button
-            onClick={addManualEntry}
-            disabled={savingId === "new" || !!knowledgeLimit?.limitReached}
-            style={{
-              ...actionBtn,
-              opacity: knowledgeLimit?.limitReached ? 0.5 : 1,
-              cursor: knowledgeLimit?.limitReached ? "not-allowed" : "pointer",
-            }}
-          >
-            {savingId === "new" ? "Saving..." : "Add entry"}
-          </button>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button
+              onClick={addManualEntry}
+              disabled={savingId === "new" || !!knowledgeLimit?.limitReached}
+              style={{
+                ...primaryBtnStyle,
+                opacity: knowledgeLimit?.limitReached || savingId === "new" ? 0.6 : 1,
+                cursor: knowledgeLimit?.limitReached ? "not-allowed" : "pointer",
+              }}
+            >
+              {savingId === "new" ? "Adding..." : "Add entry"}
+            </button>
+          </div>
         </div>
       </div>
 
       <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
         {loading ? (
-          <p>Loading...</p>
+          <p style={{ color: "#64748b" }}>Loading...</p>
         ) : rows.length === 0 ? (
-          <p>No knowledge entries yet.</p>
+          <EmptyState
+            icon="◉"
+            title="No knowledge entries yet"
+            description="Add Q&A above so the assistant can answer common questions confidently. Replies you send to escalated chats also get learned automatically."
+            actionLabel="Add your first entry"
+            onAction={focusAddForm}
+          />
         ) : (
           rows.map((row, idx) => (
-            <div key={row.id} style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 12, background: "white" }}>
+            <div key={row.id} style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, background: "white" }}>
               <div style={{ marginBottom: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={pill}>{row.source}</span>
                 <span style={pill}>{row.confidence}</span>
@@ -234,7 +266,7 @@ export default function KnowledgeBaseSection() {
                   style={field}
                 />
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
                   <select
                     value={row.source}
                     onChange={(e) => {
@@ -275,12 +307,20 @@ export default function KnowledgeBaseSection() {
                   </label>
                 </div>
 
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button onClick={() => updateRow(row)} disabled={savingId === row.id} style={actionBtn}>
-                    {savingId === row.id ? "Saving..." : "Save"}
-                  </button>
-                  <button onClick={() => deleteRow(row.id)} disabled={savingId === row.id} style={dangerBtn}>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button
+                    onClick={() => deleteRow(row.id)}
+                    disabled={savingId === row.id}
+                    style={{ ...dangerBtnStyle, opacity: savingId === row.id ? 0.6 : 1 }}
+                  >
                     Delete
+                  </button>
+                  <button
+                    onClick={() => updateRow(row)}
+                    disabled={savingId === row.id}
+                    style={{ ...secondaryBtnStyle, opacity: savingId === row.id ? 0.6 : 1 }}
+                  >
+                    {savingId === row.id ? "Saving..." : "Save"}
                   </button>
                 </div>
               </div>
@@ -296,29 +336,19 @@ const field: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
   borderRadius: 10,
-  border: "1px solid rgba(0,0,0,0.15)",
+  border: "1px solid #d1d9e6",
   background: "white",
   color: "#111827",
-};
-
-const actionBtn: React.CSSProperties = {
-  padding: "8px 12px",
-  borderRadius: 10,
-  border: "1px solid rgba(0,0,0,0.15)",
-  background: "white",
-  cursor: "pointer",
-  fontWeight: 700,
-};
-
-const dangerBtn: React.CSSProperties = {
-  ...actionBtn,
-  color: "#b91c1c",
+  fontSize: 14,
+  boxSizing: "border-box",
 };
 
 const pill: React.CSSProperties = {
   fontSize: 12,
   padding: "2px 8px",
   borderRadius: 999,
-  border: "1px solid rgba(0,0,0,0.12)",
+  border: "1px solid #e2e8f0",
   background: "#f8fafc",
+  color: "#475569",
+  fontWeight: 600,
 };

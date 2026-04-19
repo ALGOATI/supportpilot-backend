@@ -4,17 +4,24 @@ import { useState, type CSSProperties, type MouseEvent } from "react";
 import Link from "next/link";
 
 const COLORS = {
-  bg: "#FAFAF8",
+  bg: "#F8FAFC",
+  bgAlt: "#EEF2F7",
   surface: "#FFFFFF",
-  dark: "#0B0F0E",
-  text: "#2D3436",
-  muted: "#6B7280",
-  accent: "#0D9488",
-  accentLight: "#CCFBF1",
-  accentDark: "#065F53",
-  border: "#E8E8E4",
-  warm: "#F5F0EB",
+  dark: "#0F172A",
+  text: "#334155",
+  muted: "#64748B",
+  subtle: "#94A3B8",
+  accent: "#2563EB",
+  accentAlt: "#4F46E5",
+  accentLight: "#EFF6FF",
+  accentSoft: "#E0E7FF",
+  accentDark: "#1E40AF",
+  border: "#E2E8F0",
+  borderSoft: "#EEF2F7",
 };
+
+const GRADIENT = "linear-gradient(135deg, #2563EB 0%, #4F46E5 100%)";
+const PAGE_GRADIENT = "linear-gradient(145deg, #F8FAFC 0%, #EEF2F7 50%, #E8EDF5 100%)";
 
 const OUTFIT = "var(--font-outfit), 'Outfit', sans-serif";
 const DM = "var(--font-dm-sans), 'DM Sans', sans-serif";
@@ -38,6 +45,17 @@ function smoothScrollTo(id: string) {
   };
 }
 
+const LogoMark = ({ size = 36 }: { size?: number }) => (
+  // eslint-disable-next-line @next/next/no-img-element
+  <img
+    src="/supportpilot-logo.svg"
+    alt="SupportPilot"
+    width={size}
+    height={size}
+    style={{ display: "block", borderRadius: 10 }}
+  />
+);
+
 const NavBar = () => (
   <nav
     className="lp-nav"
@@ -47,7 +65,7 @@ const NavBar = () => (
       left: 0,
       right: 0,
       zIndex: 100,
-      background: "rgba(250,250,248,0.85)",
+      background: "rgba(248,250,252,0.85)",
       backdropFilter: "blur(16px)",
       WebkitBackdropFilter: "blur(16px)",
       borderBottom: `1px solid ${COLORS.border}`,
@@ -65,27 +83,11 @@ const NavBar = () => (
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            background: COLORS.accent,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#fff",
-            fontWeight: 700,
-            fontSize: 16,
-            fontFamily: OUTFIT,
-          }}
-        >
-          S
-        </div>
+        <LogoMark size={32} />
         <span
           style={{
             fontFamily: OUTFIT,
-            fontWeight: 600,
+            fontWeight: 700,
             fontSize: 18,
             color: COLORS.dark,
             letterSpacing: "-0.02em",
@@ -112,17 +114,18 @@ const NavBar = () => (
         <Link
           href="/signup"
           style={{
-            background: COLORS.dark,
+            background: GRADIENT,
             color: "#fff",
             border: "none",
-            borderRadius: 8,
+            borderRadius: 10,
             padding: "10px 22px",
             fontSize: 14,
-            fontWeight: 500,
+            fontWeight: 600,
             cursor: "pointer",
             fontFamily: DM,
             textDecoration: "none",
             display: "inline-block",
+            boxShadow: "0 4px 14px rgba(37,99,235,0.25)",
           }}
         >
           Get started free
@@ -138,7 +141,7 @@ const Hero = () => (
       paddingTop: 160,
       paddingBottom: 100,
       textAlign: "center",
-      background: COLORS.bg,
+      background: PAGE_GRADIENT,
       position: "relative",
       overflow: "hidden",
     }}
@@ -146,12 +149,25 @@ const Hero = () => (
     <div
       style={{
         position: "absolute",
-        top: -200,
-        right: -200,
-        width: 600,
-        height: 600,
+        top: -150,
+        right: -150,
+        width: 560,
+        height: 560,
         borderRadius: "50%",
-        background: "radial-gradient(circle, rgba(13,148,136,0.06) 0%, transparent 70%)",
+        background: "radial-gradient(circle, rgba(37,99,235,0.10) 0%, transparent 70%)",
+        pointerEvents: "none",
+      }}
+    />
+    <div
+      style={{
+        position: "absolute",
+        bottom: -120,
+        left: -120,
+        width: 460,
+        height: 460,
+        borderRadius: "50%",
+        background: "radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 70%)",
+        pointerEvents: "none",
       }}
     />
     <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 24px", position: "relative" }}>
@@ -166,6 +182,7 @@ const Hero = () => (
           borderRadius: 100,
           marginBottom: 24,
           fontFamily: DM,
+          border: `1px solid ${COLORS.accentSoft}`,
         }}
       >
         AI-powered customer support for small businesses
@@ -175,7 +192,7 @@ const Hero = () => (
         style={{
           fontFamily: OUTFIT,
           fontSize: 56,
-          fontWeight: 700,
+          fontWeight: 800,
           color: COLORS.dark,
           lineHeight: 1.1,
           letterSpacing: "-0.03em",
@@ -183,7 +200,16 @@ const Hero = () => (
         }}
       >
         Your business knowledge,{" "}
-        <span style={{ color: COLORS.accent }}>answering 24/7</span>
+        <span
+          style={{
+            background: GRADIENT,
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
+            backgroundClip: "text",
+          }}
+        >
+          answering 24/7
+        </span>
       </h1>
       <p
         style={{
@@ -206,18 +232,19 @@ const Hero = () => (
         <Link
           href="/signup"
           style={{
-            background: COLORS.accent,
+            background: GRADIENT,
             color: "#fff",
             border: "none",
-            borderRadius: 10,
+            borderRadius: 12,
             padding: "16px 36px",
             fontSize: 16,
-            fontWeight: 600,
+            fontWeight: 700,
             cursor: "pointer",
             fontFamily: DM,
-            transition: "transform 0.15s",
             textDecoration: "none",
             display: "inline-block",
+            boxShadow: "0 10px 30px rgba(37,99,235,0.3)",
+            letterSpacing: "-0.01em",
           }}
         >
           Start for free
@@ -226,13 +253,13 @@ const Hero = () => (
           href="#how"
           onClick={smoothScrollTo("how")}
           style={{
-            background: "transparent",
+            background: COLORS.surface,
             color: COLORS.dark,
             border: `1.5px solid ${COLORS.border}`,
-            borderRadius: 10,
+            borderRadius: 12,
             padding: "16px 36px",
             fontSize: 16,
-            fontWeight: 500,
+            fontWeight: 600,
             cursor: "pointer",
             fontFamily: DM,
             textDecoration: "none",
@@ -242,26 +269,26 @@ const Hero = () => (
           See how it works ↓
         </a>
       </div>
-      <p style={{ fontFamily: DM, fontSize: 13, color: COLORS.muted, marginTop: 16 }}>
+      <p style={{ fontFamily: DM, fontSize: 13, color: COLORS.subtle, marginTop: 16 }}>
         Free plan included · No credit card required · Set up in 5 minutes
       </p>
     </div>
 
-    <div style={{ maxWidth: 900, margin: "60px auto 0", padding: "0 24px" }}>
+    <div style={{ maxWidth: 900, margin: "60px auto 0", padding: "0 24px", position: "relative" }}>
       <div
         style={{
           background: COLORS.surface,
-          borderRadius: 16,
+          borderRadius: 20,
           border: `1px solid ${COLORS.border}`,
           padding: 24,
-          boxShadow: "0 4px 24px rgba(0,0,0,0.04)",
+          boxShadow: "0 1px 3px rgba(15,23,42,0.04), 0 20px 50px rgba(15,23,42,0.08)",
         }}
       >
         <div
           className="lp-demo-inner"
           style={{
             background: COLORS.bg,
-            borderRadius: 12,
+            borderRadius: 14,
             padding: 20,
             display: "flex",
             gap: 16,
@@ -271,7 +298,7 @@ const Hero = () => (
             <div
               style={{
                 background: COLORS.surface,
-                borderRadius: 10,
+                borderRadius: 12,
                 padding: 16,
                 border: `1px solid ${COLORS.border}`,
                 marginBottom: 12,
@@ -295,7 +322,7 @@ const Hero = () => (
                     alignItems: "center",
                     justifyContent: "center",
                     fontSize: 12,
-                    fontWeight: 600,
+                    fontWeight: 700,
                     color: "#4338CA",
                   }}
                 >
@@ -304,14 +331,14 @@ const Hero = () => (
                 <span
                   style={{
                     fontSize: 13,
-                    fontWeight: 500,
+                    fontWeight: 600,
                     color: COLORS.text,
                     fontFamily: DM,
                   }}
                 >
                   Customer
                 </span>
-                <span style={{ fontSize: 11, color: COLORS.muted, fontFamily: DM }}>2 min ago</span>
+                <span style={{ fontSize: 11, color: COLORS.subtle, fontFamily: DM }}>2 min ago</span>
               </div>
               <p
                 style={{
@@ -329,9 +356,9 @@ const Hero = () => (
             <div
               style={{
                 background: COLORS.accentLight,
-                borderRadius: 10,
+                borderRadius: 12,
                 padding: 16,
-                border: `1px solid rgba(13,148,136,0.15)`,
+                border: `1px solid ${COLORS.accentSoft}`,
               }}
             >
               <div
@@ -347,11 +374,11 @@ const Hero = () => (
                     width: 28,
                     height: 28,
                     borderRadius: 8,
-                    background: COLORS.accent,
+                    background: GRADIENT,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: 12,
+                    fontSize: 11,
                     fontWeight: 700,
                     color: "#fff",
                   }}
@@ -361,7 +388,7 @@ const Hero = () => (
                 <span
                   style={{
                     fontSize: 13,
-                    fontWeight: 500,
+                    fontWeight: 600,
                     color: COLORS.accentDark,
                     fontFamily: DM,
                   }}
@@ -390,7 +417,7 @@ const Hero = () => (
             style={{
               width: 220,
               background: COLORS.surface,
-              borderRadius: 10,
+              borderRadius: 12,
               border: `1px solid ${COLORS.border}`,
               padding: 16,
               flexShrink: 0,
@@ -399,7 +426,7 @@ const Hero = () => (
             <p
               style={{
                 fontSize: 11,
-                fontWeight: 600,
+                fontWeight: 700,
                 color: COLORS.muted,
                 margin: "0 0 12px",
                 fontFamily: DM,
@@ -412,17 +439,17 @@ const Hero = () => (
             </p>
             <div
               style={{
-                background: "#F0FDF4",
+                background: COLORS.accentLight,
                 borderRadius: 8,
                 padding: 10,
                 marginBottom: 8,
-                border: "1px solid #BBF7D0",
+                border: `1px solid ${COLORS.accentSoft}`,
               }}
             >
               <p
                 style={{
                   fontSize: 12,
-                  color: "#166534",
+                  color: COLORS.accentDark,
                   margin: 0,
                   fontFamily: DM,
                   lineHeight: 1.4,
@@ -434,16 +461,16 @@ const Hero = () => (
             </div>
             <div
               style={{
-                background: "#F0FDF4",
+                background: COLORS.accentLight,
                 borderRadius: 8,
                 padding: 10,
-                border: "1px solid #BBF7D0",
+                border: `1px solid ${COLORS.accentSoft}`,
               }}
             >
               <p
                 style={{
                   fontSize: 12,
-                  color: "#166534",
+                  color: COLORS.accentDark,
                   margin: 0,
                   fontFamily: DM,
                   lineHeight: 1.4,
@@ -456,7 +483,7 @@ const Hero = () => (
             <p
               style={{
                 fontSize: 11,
-                color: COLORS.muted,
+                color: COLORS.subtle,
                 margin: "12px 0 0",
                 fontFamily: DM,
                 lineHeight: 1.4,
@@ -501,7 +528,7 @@ const HowItWorks = () => (
           style={{
             fontFamily: DM,
             fontSize: 13,
-            fontWeight: 600,
+            fontWeight: 700,
             color: COLORS.accent,
             textTransform: "uppercase",
             letterSpacing: "0.08em",
@@ -514,7 +541,7 @@ const HowItWorks = () => (
           style={{
             fontFamily: OUTFIT,
             fontSize: 40,
-            fontWeight: 700,
+            fontWeight: 800,
             color: COLORS.dark,
             letterSpacing: "-0.02em",
             margin: 0,
@@ -530,9 +557,10 @@ const HowItWorks = () => (
             style={{
               flex: 1,
               background: COLORS.bg,
-              borderRadius: 16,
+              borderRadius: 18,
               padding: 32,
               position: "relative",
+              border: `1px solid ${COLORS.border}`,
             }}
           >
             <span
@@ -540,7 +568,7 @@ const HowItWorks = () => (
                 fontFamily: OUTFIT,
                 fontSize: 48,
                 fontWeight: 800,
-                color: "rgba(13,148,136,0.1)",
+                color: "rgba(37,99,235,0.12)",
                 position: "absolute",
                 top: 20,
                 right: 24,
@@ -554,6 +582,7 @@ const HowItWorks = () => (
                 height: 48,
                 borderRadius: 12,
                 background: COLORS.accentLight,
+                border: `1px solid ${COLORS.accentSoft}`,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -567,7 +596,7 @@ const HowItWorks = () => (
               style={{
                 fontFamily: OUTFIT,
                 fontSize: 20,
-                fontWeight: 600,
+                fontWeight: 700,
                 color: COLORS.dark,
                 margin: "0 0 10px",
                 letterSpacing: "-0.01em",
@@ -634,7 +663,7 @@ const Features = () => (
           style={{
             fontFamily: DM,
             fontSize: 13,
-            fontWeight: 600,
+            fontWeight: 700,
             color: COLORS.accent,
             textTransform: "uppercase",
             letterSpacing: "0.08em",
@@ -647,7 +676,7 @@ const Features = () => (
           style={{
             fontFamily: OUTFIT,
             fontSize: 40,
-            fontWeight: 700,
+            fontWeight: 800,
             color: COLORS.dark,
             letterSpacing: "-0.02em",
             margin: "0 0 12px",
@@ -668,7 +697,7 @@ const Features = () => (
             key={i}
             style={{
               background: COLORS.surface,
-              borderRadius: 14,
+              borderRadius: 16,
               padding: 28,
               border: `1px solid ${COLORS.border}`,
               transition: "border-color 0.2s",
@@ -680,11 +709,12 @@ const Features = () => (
                 background: COLORS.accentLight,
                 color: COLORS.accentDark,
                 fontSize: 11,
-                fontWeight: 600,
+                fontWeight: 700,
                 padding: "3px 10px",
                 borderRadius: 6,
                 marginBottom: 14,
                 fontFamily: DM,
+                border: `1px solid ${COLORS.accentSoft}`,
               }}
             >
               {f.tag}
@@ -693,7 +723,7 @@ const Features = () => (
               style={{
                 fontFamily: OUTFIT,
                 fontSize: 18,
-                fontWeight: 600,
+                fontWeight: 700,
                 color: COLORS.dark,
                 margin: "0 0 8px",
               }}
@@ -776,7 +806,7 @@ const Pricing = () => (
           style={{
             fontFamily: DM,
             fontSize: 13,
-            fontWeight: 600,
+            fontWeight: 700,
             color: COLORS.accent,
             textTransform: "uppercase",
             letterSpacing: "0.08em",
@@ -789,7 +819,7 @@ const Pricing = () => (
           style={{
             fontFamily: OUTFIT,
             fontSize: 40,
-            fontWeight: 700,
+            fontWeight: 800,
             color: COLORS.dark,
             letterSpacing: "-0.02em",
             margin: "0 0 12px",
@@ -803,7 +833,7 @@ const Pricing = () => (
       </div>
       <div
         className="lp-pricing-grid"
-        style={{ display: "flex", gap: 20, justifyContent: "center" }}
+        style={{ display: "flex", gap: 20, justifyContent: "center", alignItems: "stretch" }}
       >
         {tiers.map((t, i) => (
           <div
@@ -812,11 +842,12 @@ const Pricing = () => (
             style={{
               flex: 1,
               maxWidth: 300,
-              background: t.highlight ? COLORS.dark : COLORS.surface,
-              borderRadius: 18,
+              background: t.highlight ? GRADIENT : COLORS.surface,
+              borderRadius: 20,
               padding: 36,
               position: "relative",
               border: t.highlight ? "none" : `1px solid ${COLORS.border}`,
+              boxShadow: t.highlight ? "0 20px 50px rgba(37,99,235,0.25)" : "none",
             }}
           >
             {t.highlight && (
@@ -826,13 +857,14 @@ const Pricing = () => (
                   top: -12,
                   left: "50%",
                   transform: "translateX(-50%)",
-                  background: COLORS.accent,
-                  color: "#fff",
+                  background: "#fff",
+                  color: COLORS.accent,
                   fontSize: 11,
-                  fontWeight: 600,
+                  fontWeight: 700,
                   padding: "5px 16px",
                   borderRadius: 100,
                   fontFamily: DM,
+                  boxShadow: "0 4px 12px rgba(15,23,42,0.12)",
                 }}
               >
                 Most popular
@@ -842,8 +874,8 @@ const Pricing = () => (
               style={{
                 fontFamily: DM,
                 fontSize: 14,
-                fontWeight: 600,
-                color: t.highlight ? "rgba(255,255,255,0.6)" : COLORS.muted,
+                fontWeight: 700,
+                color: t.highlight ? "rgba(255,255,255,0.8)" : COLORS.muted,
                 margin: "0 0 4px",
               }}
             >
@@ -854,7 +886,7 @@ const Pricing = () => (
                 style={{
                   fontFamily: OUTFIT,
                   fontSize: 44,
-                  fontWeight: 700,
+                  fontWeight: 800,
                   color: t.highlight ? "#fff" : COLORS.dark,
                   letterSpacing: "-0.03em",
                 }}
@@ -866,7 +898,7 @@ const Pricing = () => (
                   fontFamily: DM,
                   fontSize: 16,
                   fontWeight: 500,
-                  color: t.highlight ? "rgba(255,255,255,0.5)" : COLORS.muted,
+                  color: t.highlight ? "rgba(255,255,255,0.7)" : COLORS.muted,
                 }}
               >
                 {t.price === "0" ? "" : " kr"}
@@ -877,7 +909,7 @@ const Pricing = () => (
               style={{
                 fontFamily: DM,
                 fontSize: 14,
-                color: t.highlight ? "rgba(255,255,255,0.5)" : COLORS.muted,
+                color: t.highlight ? "rgba(255,255,255,0.7)" : COLORS.muted,
                 margin: "0 0 24px",
               }}
             >
@@ -889,19 +921,20 @@ const Pricing = () => (
                 display: "block",
                 width: "100%",
                 padding: "14px 0",
-                borderRadius: 10,
+                borderRadius: 12,
                 fontSize: 15,
-                fontWeight: 600,
+                fontWeight: 700,
                 cursor: "pointer",
                 fontFamily: DM,
                 marginBottom: 24,
                 transition: "transform 0.15s",
-                background: t.highlight ? COLORS.accent : "transparent",
-                color: t.highlight ? "#fff" : COLORS.dark,
-                border: t.highlight ? "none" : `1.5px solid ${COLORS.border}`,
+                background: t.highlight ? "#fff" : GRADIENT,
+                color: t.highlight ? COLORS.accent : "#fff",
+                border: "none",
                 textAlign: "center",
                 textDecoration: "none",
                 boxSizing: "border-box",
+                boxShadow: t.highlight ? "none" : "0 6px 16px rgba(37,99,235,0.22)",
               }}
             >
               {t.cta}
@@ -917,10 +950,19 @@ const Pricing = () => (
                     padding: "7px 0",
                     fontSize: 14,
                     fontFamily: DM,
-                    color: t.highlight ? "rgba(255,255,255,0.8)" : COLORS.text,
+                    color: t.highlight ? "rgba(255,255,255,0.9)" : COLORS.text,
                   }}
                 >
-                  <span style={{ color: COLORS.accent, fontSize: 15, flexShrink: 0 }}>✓</span>
+                  <span
+                    style={{
+                      color: t.highlight ? "#fff" : COLORS.accent,
+                      fontSize: 15,
+                      flexShrink: 0,
+                      fontWeight: 700,
+                    }}
+                  >
+                    ✓
+                  </span>
                   {f}
                 </div>
               ))}
@@ -969,7 +1011,7 @@ const FAQ = () => {
             style={{
               fontFamily: OUTFIT,
               fontSize: 40,
-              fontWeight: 700,
+              fontWeight: 800,
               color: COLORS.dark,
               letterSpacing: "-0.02em",
               margin: 0,
@@ -996,7 +1038,7 @@ const FAQ = () => {
                 style={{
                   fontFamily: DM,
                   fontSize: 16,
-                  fontWeight: 500,
+                  fontWeight: 600,
                   color: COLORS.dark,
                   margin: 0,
                 }}
@@ -1006,8 +1048,8 @@ const FAQ = () => {
               <span
                 style={{
                   fontSize: 22,
-                  color: COLORS.muted,
-                  fontWeight: 300,
+                  color: COLORS.accent,
+                  fontWeight: 400,
                   transform: open === i ? "rotate(45deg)" : "none",
                   transition: "transform 0.2s",
                   flexShrink: 0,
@@ -1040,14 +1082,44 @@ const FAQ = () => {
 
 const FinalCTA = () => (
   <section
-    style={{ padding: "100px 24px", background: COLORS.dark, textAlign: "center" }}
+    style={{
+      padding: "100px 24px",
+      background: GRADIENT,
+      textAlign: "center",
+      position: "relative",
+      overflow: "hidden",
+    }}
   >
-    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+    <div
+      style={{
+        position: "absolute",
+        top: -200,
+        right: -200,
+        width: 500,
+        height: 500,
+        borderRadius: "50%",
+        background: "radial-gradient(circle, rgba(255,255,255,0.12) 0%, transparent 70%)",
+        pointerEvents: "none",
+      }}
+    />
+    <div
+      style={{
+        position: "absolute",
+        bottom: -200,
+        left: -200,
+        width: 500,
+        height: 500,
+        borderRadius: "50%",
+        background: "radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%)",
+        pointerEvents: "none",
+      }}
+    />
+    <div style={{ maxWidth: 600, margin: "0 auto", position: "relative" }}>
       <h2
         style={{
           fontFamily: OUTFIT,
           fontSize: 40,
-          fontWeight: 700,
+          fontWeight: 800,
           color: "#fff",
           letterSpacing: "-0.02em",
           margin: "0 0 16px",
@@ -1059,7 +1131,7 @@ const FinalCTA = () => (
         style={{
           fontFamily: DM,
           fontSize: 17,
-          color: "rgba(255,255,255,0.55)",
+          color: "rgba(255,255,255,0.85)",
           lineHeight: 1.6,
           margin: "0 0 36px",
         }}
@@ -1070,17 +1142,18 @@ const FinalCTA = () => (
       <Link
         href="/signup"
         style={{
-          background: COLORS.accent,
-          color: "#fff",
+          background: "#fff",
+          color: COLORS.accent,
           border: "none",
-          borderRadius: 10,
+          borderRadius: 12,
           padding: "16px 40px",
           fontSize: 17,
-          fontWeight: 600,
+          fontWeight: 700,
           cursor: "pointer",
           fontFamily: DM,
           textDecoration: "none",
           display: "inline-block",
+          boxShadow: "0 10px 30px rgba(15,23,42,0.2)",
         }}
       >
         Get started for free
@@ -1109,29 +1182,13 @@ const Footer = () => (
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div
-          style={{
-            width: 24,
-            height: 24,
-            borderRadius: 6,
-            background: COLORS.accent,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#fff",
-            fontWeight: 700,
-            fontSize: 12,
-            fontFamily: OUTFIT,
-          }}
-        >
-          S
-        </div>
+        <LogoMark size={28} />
         <span
           style={{
             fontFamily: OUTFIT,
-            fontWeight: 500,
+            fontWeight: 600,
             fontSize: 14,
-            color: "rgba(255,255,255,0.4)",
+            color: "rgba(255,255,255,0.6)",
           }}
         >
           SupportPilot
@@ -1141,7 +1198,7 @@ const Footer = () => (
         style={{
           fontFamily: DM,
           fontSize: 13,
-          color: "rgba(255,255,255,0.3)",
+          color: "rgba(255,255,255,0.4)",
           margin: 0,
         }}
       >

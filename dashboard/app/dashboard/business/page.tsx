@@ -5,6 +5,14 @@ import { supabase } from "@/lib/supabase";
 import DashboardShell from "../_components/DashboardShell";
 import KnowledgeBaseSection from "../_components/KnowledgeBaseSection";
 import { getBackendUrl } from "@/lib/backend-url";
+import { ToastProvider, useToast } from "../_components/Toast";
+import {
+  primaryBtnStyle,
+  secondaryBtnStyle,
+  dangerBtnStyle,
+  ghostBtnStyle,
+  EmptyState,
+} from "../_components/ui";
 
 type TabKey =
   | "profile"
@@ -24,6 +32,7 @@ type HourRow = {
 
 type MenuItemRow = {
   id?: string;
+  _clientKey: string;
   name: string;
   price: string;
   description: string;
@@ -34,6 +43,7 @@ type MenuItemRow = {
 
 type FaqRow = {
   id?: string;
+  _clientKey: string;
   question: string;
   answer: string;
 };
@@ -59,10 +69,11 @@ const fieldStyle: React.CSSProperties = {
   width: "100%",
   padding: "10px 12px",
   borderRadius: 10,
-  border: "2px solid #d1d5db",
+  border: "1px solid #d1d9e6",
   background: "#ffffff",
   color: "#111827",
   fontSize: 14,
+  boxSizing: "border-box",
 };
 
 const areaStyle: React.CSSProperties = {
@@ -71,13 +82,38 @@ const areaStyle: React.CSSProperties = {
   resize: "vertical",
 };
 
-const saveBtnStyle: React.CSSProperties = {
-  padding: "10px 16px",
-  borderRadius: 10,
-  border: "1px solid rgba(0,0,0,0.15)",
+const sectionStyle: React.CSSProperties = {
+  border: "1px solid #e2e8f0",
+  borderRadius: 14,
+  padding: 18,
   background: "white",
-  cursor: "pointer",
-  fontWeight: 700,
+  boxShadow: "0 1px 2px rgba(15,23,42,0.04)",
+};
+
+const sectionHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  flexWrap: "wrap",
+  marginBottom: 14,
+};
+
+const sectionTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: 16,
+  fontWeight: 800,
+  color: "#0f172a",
+};
+
+const sectionFooterStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+  alignItems: "center",
+  gap: 10,
+  marginTop: 18,
+  paddingTop: 14,
+  borderTop: "1px solid #eef1f7",
 };
 
 function defaultHours(): HourRow[] {
@@ -112,12 +148,31 @@ function getMenuTabLabel(businessType: string): string {
   }
 }
 
+function getMenuItemNoun(businessType: string): string {
+  switch (businessType) {
+    case "restaurant":
+      return "menu item";
+    case "retail":
+      return "product";
+    default:
+      return "service";
+  }
+}
+
+function newClientKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 const VALID_TABS: TabKey[] = ["profile", "hours", "menu", "faqs", "booking", "knowledge"];
 const TAB_STORAGE_KEY = "sp_business_tab";
 
-export default function BusinessSetupPage() {
+function BusinessSetupInner() {
   const router = useRouter();
   const BACKEND_URL = useMemo(() => getBackendUrl(), []);
+  const { notify } = useToast();
 
   // Resolve initial tab from URL > localStorage > default
   const initialTab = useMemo(() => {
@@ -129,7 +184,6 @@ export default function BusinessSetupPage() {
       if (stored && VALID_TABS.includes(stored)) return stored;
     }
     return "profile" as TabKey;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
@@ -143,28 +197,24 @@ export default function BusinessSetupPage() {
   const [address, setAddress] = useState("");
   const [timezone, setTimezone] = useState("Europe/Stockholm");
   const [profileSaving, setProfileSaving] = useState(false);
-  const [profileStatus, setProfileStatus] = useState<string | null>(null);
 
   // Hours state
   const [hours, setHours] = useState<HourRow[]>(defaultHours());
   const [hoursSaving, setHoursSaving] = useState(false);
-  const [hoursStatus, setHoursStatus] = useState<string | null>(null);
 
   // Menu state
   const [menuItems, setMenuItems] = useState<MenuItemRow[]>([]);
   const [deletedMenuIds, setDeletedMenuIds] = useState<string[]>([]);
   const [importingPhoto, setImportingPhoto] = useState(false);
   const [savingImported, setSavingImported] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
   const [importItems, setImportItems] = useState<ImportedMenuItem[]>([]);
   const [menuSaving, setMenuSaving] = useState(false);
-  const [menuStatus, setMenuStatus] = useState<string | null>(null);
+  const [expandedMenuKeys, setExpandedMenuKeys] = useState<Set<string>>(new Set());
 
   // FAQs state
   const [faqs, setFaqs] = useState<FaqRow[]>([]);
   const [deletedFaqIds, setDeletedFaqIds] = useState<string[]>([]);
   const [faqsSaving, setFaqsSaving] = useState(false);
-  const [faqsStatus, setFaqsStatus] = useState<string | null>(null);
 
   // Booking state
   const [bookingEnabled, setBookingEnabled] = useState(true);
@@ -172,7 +222,6 @@ export default function BusinessSetupPage() {
   const [requirePhone, setRequirePhone] = useState(true);
   const [maxPartySize, setMaxPartySize] = useState("");
   const [bookingSaving, setBookingSaving] = useState(false);
-  const [bookingStatus, setBookingStatus] = useState<string | null>(null);
 
   function switchTab(tab: TabKey) {
     setActiveTab(tab);
@@ -180,6 +229,15 @@ export default function BusinessSetupPage() {
     const url = new URL(window.location.href);
     url.searchParams.set("tab", tab);
     window.history.replaceState({}, "", url.toString());
+  }
+
+  function toggleMenuExpand(key: string) {
+    setExpandedMenuKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   const hasMenuItems = useMemo(() => {
@@ -274,6 +332,7 @@ export default function BusinessSetupPage() {
       setMenuItems(
         (menuRes.data || []).map((row) => ({
           id: row.id,
+          _clientKey: newClientKey(),
           name: row.name ?? "",
           price: row.price === null || row.price === undefined ? "" : String(row.price),
           description: row.description ?? "",
@@ -286,6 +345,7 @@ export default function BusinessSetupPage() {
       setFaqs(
         (faqRes.data || []).map((row) => ({
           id: row.id,
+          _clientKey: newClientKey(),
           question: row.question ?? "",
           answer: row.answer ?? "",
         }))
@@ -313,7 +373,6 @@ export default function BusinessSetupPage() {
   async function saveProfile() {
     if (!userId) return;
     setProfileSaving(true);
-    setProfileStatus(null);
     try {
       const now = new Date().toISOString();
       const { error } = await supabase
@@ -328,10 +387,10 @@ export default function BusinessSetupPage() {
           updated_at: now,
         }, { onConflict: "user_id" });
       if (error) throw error;
-      setProfileStatus("Profile saved.");
+      notify("Profile saved");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      setProfileStatus(`Save failed: ${message}`);
+      notify(`Save failed: ${message}`, "error");
     } finally {
       setProfileSaving(false);
     }
@@ -340,7 +399,6 @@ export default function BusinessSetupPage() {
   async function saveHours() {
     if (!userId) return;
     setHoursSaving(true);
-    setHoursStatus(null);
     try {
       const now = new Date().toISOString();
       const hoursPayload = hours.map((row) => ({
@@ -355,10 +413,10 @@ export default function BusinessSetupPage() {
         .from("business_hours")
         .upsert(hoursPayload, { onConflict: "user_id,day_of_week" });
       if (error) throw error;
-      setHoursStatus("Hours saved.");
+      notify("Hours saved");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      setHoursStatus(`Save failed: ${message}`);
+      notify(`Save failed: ${message}`, "error");
     } finally {
       setHoursSaving(false);
     }
@@ -367,7 +425,6 @@ export default function BusinessSetupPage() {
   async function saveMenu() {
     if (!userId) return;
     setMenuSaving(true);
-    setMenuStatus(null);
     try {
       const now = new Date().toISOString();
       const normalizedMenu = menuItems
@@ -420,10 +477,10 @@ export default function BusinessSetupPage() {
       }
 
       setDeletedMenuIds([]);
-      setMenuStatus(`${getMenuTabLabel(businessType)} saved.`);
+      notify(`${getMenuTabLabel(businessType)} saved`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      setMenuStatus(`Save failed: ${message}`);
+      notify(`Save failed: ${message}`, "error");
     } finally {
       setMenuSaving(false);
     }
@@ -432,7 +489,6 @@ export default function BusinessSetupPage() {
   async function saveFaqs() {
     if (!userId) return;
     setFaqsSaving(true);
-    setFaqsStatus(null);
     try {
       const now = new Date().toISOString();
       const normalizedFaqs = faqs
@@ -481,10 +537,10 @@ export default function BusinessSetupPage() {
       }
 
       setDeletedFaqIds([]);
-      setFaqsStatus("FAQs saved.");
+      notify("FAQs saved");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      setFaqsStatus(`Save failed: ${message}`);
+      notify(`Save failed: ${message}`, "error");
     } finally {
       setFaqsSaving(false);
     }
@@ -493,7 +549,6 @@ export default function BusinessSetupPage() {
   async function saveBookingRules() {
     if (!userId) return;
     setBookingSaving(true);
-    setBookingStatus(null);
     try {
       const now = new Date().toISOString();
       const { error } = await supabase
@@ -507,10 +562,10 @@ export default function BusinessSetupPage() {
           updated_at: now,
         }, { onConflict: "user_id" });
       if (error) throw error;
-      setBookingStatus("Booking rules saved.");
+      notify("Booking rules saved");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      setBookingStatus(`Save failed: ${message}`);
+      notify(`Save failed: ${message}`, "error");
     } finally {
       setBookingSaving(false);
     }
@@ -520,11 +575,10 @@ export default function BusinessSetupPage() {
 
   async function importMenuFromPhoto(file: File) {
     if (!userId || !file) return;
-    setImportError(null);
 
     const MAX_FILE_SIZE = 2 * 1024 * 1024;
     if (file.size > MAX_FILE_SIZE) {
-      setImportError("Image must be under 2MB. Please compress it first.");
+      notify("Image must be under 2MB. Please compress it first.", "error");
       return;
     }
 
@@ -565,9 +619,10 @@ export default function BusinessSetupPage() {
         };
       });
       setImportItems(nextItems);
+      notify(`Found ${nextItems.length} item(s) in photo — review before saving`, "info");
     } catch (err: unknown) {
       console.error(err);
-      setImportError("Could not extract menu. Try another photo.");
+      notify("Could not extract menu. Try another photo.", "error");
       setImportItems([]);
     } finally {
       setImportingPhoto(false);
@@ -576,7 +631,6 @@ export default function BusinessSetupPage() {
 
   async function saveImportedItems() {
     if (!userId || importItems.length === 0) return;
-    setImportError(null);
     setSavingImported(true);
 
     try {
@@ -598,7 +652,7 @@ export default function BusinessSetupPage() {
         .filter((item) => item.name);
 
       if (!payloadItems.length) {
-        setImportError("No valid items to save.");
+        notify("No valid items to save.", "error");
         return;
       }
 
@@ -621,6 +675,7 @@ export default function BusinessSetupPage() {
         const safe = (row && typeof row === "object" ? row : {}) as Record<string, unknown>;
         return {
           id: String(safe.id || ""),
+          _clientKey: newClientKey(),
           name: String(safe.name || ""),
           price: safe.price === null || safe.price === undefined || safe.price === "" ? "" : String(safe.price),
           description: String(safe.description || ""),
@@ -634,14 +689,31 @@ export default function BusinessSetupPage() {
         setMenuItems((prev) => [...insertedRows, ...prev]);
       }
       setImportItems([]);
-      setMenuStatus(`Imported ${insertedRows.length || payloadItems.length} item(s).`);
+      notify(`Imported ${insertedRows.length || payloadItems.length} item(s)`);
     } catch (err: unknown) {
       console.error(err);
       const message = err instanceof Error ? err.message : "Failed to save imported items";
-      setImportError(message);
+      notify(message, "error");
     } finally {
       setSavingImported(false);
     }
+  }
+
+  function addMenuItem() {
+    const key = newClientKey();
+    setMenuItems((prev) => [
+      { _clientKey: key, name: "", price: "", description: "", category: "", available: true, tags: "" },
+      ...prev,
+    ]);
+    setExpandedMenuKeys((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+  }
+
+  function addFaq() {
+    setFaqs((prev) => [{ _clientKey: newClientKey(), question: "", answer: "" }, ...prev]);
   }
 
   if (loading) {
@@ -655,6 +727,7 @@ export default function BusinessSetupPage() {
   }
 
   const menuTabLabel = getMenuTabLabel(businessType);
+  const menuItemNoun = getMenuItemNoun(businessType);
 
   const tabs: Array<{ key: TabKey; label: string }> = [
     { key: "profile", label: "Profile" },
@@ -675,8 +748,8 @@ export default function BusinessSetupPage() {
           marginTop: 16,
           display: "flex",
           flexWrap: "wrap",
-          gap: 6,
-          borderBottom: "1px solid rgba(0,0,0,0.1)",
+          gap: 4,
+          borderBottom: "1px solid #e2e8f0",
           paddingBottom: 0,
           overflowX: "auto",
         }}
@@ -690,17 +763,18 @@ export default function BusinessSetupPage() {
               aria-selected={active}
               onClick={() => switchTab(tab.key)}
               style={{
-                padding: "8px 14px",
-                borderRadius: "10px 10px 0 0",
-                border: "1px solid rgba(0,0,0,0.1)",
-                borderBottom: active ? "1px solid white" : "1px solid transparent",
+                padding: "10px 16px",
+                borderRadius: 0,
+                border: "none",
+                borderBottom: active ? "2px solid #2563eb" : "2px solid transparent",
                 marginBottom: -1,
-                background: active ? "white" : "#f8fafc",
-                color: active ? "#0f172a" : "#475569",
-                fontWeight: 700,
+                background: "transparent",
+                color: active ? "#1d4ed8" : "#64748b",
+                fontWeight: active ? 800 : 600,
                 cursor: "pointer",
                 fontSize: 13,
                 whiteSpace: "nowrap",
+                transition: "color 120ms ease, border-color 120ms ease",
               }}
             >
               {tab.label}
@@ -712,13 +786,13 @@ export default function BusinessSetupPage() {
       <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
         {/* ─── Profile Tab ─── */}
         {activeTab === "profile" && (
-          <section
-            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-          >
-            <h2 style={{ marginTop: 0 }}>Profile</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+          <section style={sectionStyle}>
+            <div style={sectionHeaderStyle}>
+              <h2 style={sectionTitleStyle}>Profile</h2>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Business name</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Business name</span>
                 <input
                   style={fieldStyle}
                   placeholder="Type business name"
@@ -727,7 +801,7 @@ export default function BusinessSetupPage() {
                 />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Business type</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Business type</span>
                 <select
                   style={fieldStyle}
                   value={niche}
@@ -742,7 +816,7 @@ export default function BusinessSetupPage() {
                 </select>
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Phone</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Phone</span>
                 <input
                   style={fieldStyle}
                   placeholder="Type phone number"
@@ -751,7 +825,7 @@ export default function BusinessSetupPage() {
                 />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span>Timezone</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Timezone</span>
                 <input
                   style={fieldStyle}
                   placeholder="Type timezone (example: Europe/Stockholm)"
@@ -760,8 +834,8 @@ export default function BusinessSetupPage() {
                 />
               </label>
             </div>
-            <label style={{ display: "grid", gap: 6, marginTop: 10 }}>
-              <span>Address</span>
+            <label style={{ display: "grid", gap: 6, marginTop: 12 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Address</span>
               <input
                 style={fieldStyle}
                 placeholder="Type business address"
@@ -769,34 +843,37 @@ export default function BusinessSetupPage() {
                 onChange={(e) => setAddress(e.target.value)}
               />
             </label>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
-              <button onClick={saveProfile} disabled={profileSaving} style={{ ...saveBtnStyle, background: profileSaving ? "#e5e7eb" : "white" }}>
-                {profileSaving ? "Saving..." : "Save profile"}
+            <div style={sectionFooterStyle}>
+              <button
+                onClick={saveProfile}
+                disabled={profileSaving}
+                style={{ ...primaryBtnStyle, opacity: profileSaving ? 0.7 : 1 }}
+              >
+                {profileSaving ? "Saving..." : "Save changes"}
               </button>
-              {profileStatus && <span style={{ fontWeight: 600 }}>{profileStatus}</span>}
             </div>
           </section>
         )}
 
         {/* ─── Hours Tab ─── */}
         {activeTab === "hours" && (
-          <section
-            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-          >
-            <h2 style={{ marginTop: 0 }}>Opening Hours</h2>
+          <section style={sectionStyle}>
+            <div style={sectionHeaderStyle}>
+              <h2 style={sectionTitleStyle}>Opening Hours</h2>
+            </div>
             <div style={{ display: "grid", gap: 8 }}>
               {hours.map((row, idx) => (
                 <div
                   key={row.day_of_week}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "140px 120px 1fr 1fr",
+                    gridTemplateColumns: "minmax(110px, 140px) minmax(110px, 130px) minmax(0,1fr) minmax(0,1fr)",
                     gap: 10,
                     alignItems: "center",
                   }}
                 >
-                  <strong>{DAY_NAMES[row.day_of_week]}</strong>
-                  <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <strong style={{ color: "#0f172a", fontSize: 13 }}>{DAY_NAMES[row.day_of_week]}</strong>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#475569" }}>
                     <input
                       type="checkbox"
                       checked={row.is_closed}
@@ -810,7 +887,7 @@ export default function BusinessSetupPage() {
                   </label>
                   <input
                     type="time"
-                    style={fieldStyle}
+                    style={{ ...fieldStyle, opacity: row.is_closed ? 0.5 : 1 }}
                     value={row.open_time}
                     disabled={row.is_closed}
                     onChange={(e) => {
@@ -821,7 +898,7 @@ export default function BusinessSetupPage() {
                   />
                   <input
                     type="time"
-                    style={fieldStyle}
+                    style={{ ...fieldStyle, opacity: row.is_closed ? 0.5 : 1 }}
                     value={row.close_time}
                     disabled={row.is_closed}
                     onChange={(e) => {
@@ -833,32 +910,32 @@ export default function BusinessSetupPage() {
                 </div>
               ))}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
-              <button onClick={saveHours} disabled={hoursSaving} style={{ ...saveBtnStyle, background: hoursSaving ? "#e5e7eb" : "white" }}>
-                {hoursSaving ? "Saving..." : "Save hours"}
+            <div style={sectionFooterStyle}>
+              <button
+                onClick={saveHours}
+                disabled={hoursSaving}
+                style={{ ...primaryBtnStyle, opacity: hoursSaving ? 0.7 : 1 }}
+              >
+                {hoursSaving ? "Saving..." : "Save changes"}
               </button>
-              {hoursStatus && <span style={{ fontWeight: 600 }}>{hoursStatus}</span>}
             </div>
           </section>
         )}
 
         {/* ─── Menu / Services / Products Tab ─── */}
         {activeTab === "menu" && (
-          <section
-            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-              <h2 style={{ marginTop: 0 }}>{menuTabLabel}</h2>
+          <section style={sectionStyle}>
+            <div style={sectionHeaderStyle}>
+              <h2 style={sectionTitleStyle}>{menuTabLabel}</h2>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <label
                   style={{
-                    ...fieldStyle,
+                    ...secondaryBtnStyle,
                     cursor: importingPhoto ? "not-allowed" : "pointer",
-                    width: "auto",
-                    fontWeight: 700,
-                    background: importingPhoto ? "#f3f4f6" : "white",
+                    opacity: importingPhoto ? 0.7 : 1,
                   }}
                 >
+                  <span aria-hidden="true">⌥</span>
                   {importingPhoto ? "Importing..." : "Import from photo"}
                   <input
                     type="file"
@@ -873,34 +950,25 @@ export default function BusinessSetupPage() {
                   />
                 </label>
 
-                <button
-                  onClick={() =>
-                    setMenuItems((prev) => [
-                      { name: "", price: "", description: "", category: "", available: true, tags: "" },
-                      ...prev,
-                    ])
-                  }
-                >
+                <button onClick={addMenuItem} style={secondaryBtnStyle}>
+                  <span aria-hidden="true">+</span>
                   Add item
                 </button>
               </div>
             </div>
 
-            {importError ? (
-              <p style={{ marginTop: 8, color: "#b91c1c", fontWeight: 700 }}>{importError}</p>
-            ) : null}
-
             {importItems.length > 0 ? (
               <div
                 style={{
-                  marginTop: 12,
+                  marginTop: 4,
+                  marginBottom: 14,
                   border: "1px solid #bfdbfe",
                   background: "#eff6ff",
-                  borderRadius: 10,
-                  padding: 10,
+                  borderRadius: 12,
+                  padding: 12,
                 }}
               >
-                <div style={{ fontWeight: 800, marginBottom: 8 }}>
+                <div style={{ fontWeight: 800, marginBottom: 10, color: "#1e40af", fontSize: 13 }}>
                   Imported preview (edit before saving)
                 </div>
                 <div style={{ display: "grid", gap: 8 }}>
@@ -908,12 +976,12 @@ export default function BusinessSetupPage() {
                     <div
                       key={`import-row-${idx}`}
                       style={{
-                        border: "1px solid rgba(0,0,0,0.1)",
-                        borderRadius: 8,
-                        padding: 8,
+                        border: "1px solid #dbeafe",
+                        borderRadius: 10,
+                        padding: 10,
                         background: "white",
                         display: "grid",
-                        gridTemplateColumns: "2fr 1fr 2fr 1fr auto",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr)) auto",
                         gap: 8,
                         alignItems: "center",
                       }}
@@ -922,103 +990,233 @@ export default function BusinessSetupPage() {
                       <input style={fieldStyle} placeholder="Price" value={row.price} onChange={(e) => { const next = [...importItems]; next[idx] = { ...next[idx], price: e.target.value }; setImportItems(next); }} />
                       <input style={fieldStyle} placeholder="Description" value={row.description} onChange={(e) => { const next = [...importItems]; next[idx] = { ...next[idx], description: e.target.value }; setImportItems(next); }} />
                       <input style={fieldStyle} placeholder="Category" value={row.category} onChange={(e) => { const next = [...importItems]; next[idx] = { ...next[idx], category: e.target.value }; setImportItems(next); }} />
-                      <button onClick={() => setImportItems(importItems.filter((_, rowIdx) => rowIdx !== idx))}>Remove</button>
+                      <button
+                        onClick={() => setImportItems(importItems.filter((_, rowIdx) => rowIdx !== idx))}
+                        style={ghostBtnStyle}
+                        aria-label="Remove imported row"
+                      >
+                        ×
+                      </button>
                     </div>
                   ))}
                 </div>
-                <div style={{ marginTop: 10 }}>
-                  <button onClick={saveImportedItems} disabled={savingImported}>
-                    {savingImported ? "Saving..." : "Save items"}
+                <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                  <button
+                    onClick={() => setImportItems([])}
+                    style={secondaryBtnStyle}
+                    disabled={savingImported}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveImportedItems}
+                    style={{ ...primaryBtnStyle, opacity: savingImported ? 0.7 : 1 }}
+                    disabled={savingImported}
+                  >
+                    {savingImported ? "Saving..." : "Save imported items"}
                   </button>
                 </div>
               </div>
             ) : null}
 
-            <div style={{ display: "grid", gap: 8 }}>
-              {menuItems.map((item, idx) => (
-                <div
-                  key={item.id || `new-menu-${idx}`}
-                  style={{
-                    border: "1px solid rgba(0,0,0,0.1)",
-                    borderRadius: 10,
-                    padding: 10,
-                    display: "grid",
-                    gridTemplateColumns: "2fr 1fr 1fr",
-                    gap: 8,
-                  }}
-                >
-                  <input style={fieldStyle} placeholder="Name" value={item.name} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], name: e.target.value }; setMenuItems(next); }} />
-                  <input style={fieldStyle} placeholder="Price" value={item.price} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], price: e.target.value }; setMenuItems(next); }} />
-                  <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <input type="checkbox" checked={item.available} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], available: e.target.checked }; setMenuItems(next); }} />
-                    Available
-                  </label>
-                  <input style={fieldStyle} placeholder="Category" value={item.category} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], category: e.target.value }; setMenuItems(next); }} />
-                  <input style={fieldStyle} placeholder="Tags (comma separated)" value={item.tags} onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], tags: e.target.value }; setMenuItems(next); }} />
-                  <button onClick={() => { const target = menuItems[idx]; if (target?.id) setDeletedMenuIds((prev) => [...prev, target.id as string]); setMenuItems(menuItems.filter((_, rowIdx) => rowIdx !== idx)); }}>Remove</button>
-                  <textarea
-                    style={{ ...areaStyle, gridColumn: "1 / span 3" }}
-                    placeholder="Description"
-                    rows={2}
-                    value={item.description}
-                    onChange={(e) => { const next = [...menuItems]; next[idx] = { ...next[idx], description: e.target.value }; setMenuItems(next); }}
-                  />
-                </div>
-              ))}
-              {!hasMenuItems && <p style={{ color: "#6b7280" }}>No items yet.</p>}
-            </div>
+            {menuItems.length === 0 ? (
+              <EmptyState
+                icon="◧"
+                title={`No ${menuTabLabel.toLowerCase()} yet`}
+                description={`Add the ${menuItemNoun}s your customers can ask about. The assistant uses this list to answer questions and take orders.`}
+                actionLabel={`Add your first ${menuItemNoun}`}
+                onAction={addMenuItem}
+              />
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {menuItems.map((item, idx) => {
+                  const expanded = expandedMenuKeys.has(item._clientKey);
+                  const updateField = (field: keyof MenuItemRow, value: string | boolean) => {
+                    const next = [...menuItems];
+                    next[idx] = { ...next[idx], [field]: value } as MenuItemRow;
+                    setMenuItems(next);
+                  };
+                  return (
+                    <div
+                      key={item._clientKey}
+                      style={{
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 12,
+                        background: "#ffffff",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          padding: "10px 12px",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <input
+                          style={{ ...fieldStyle, flex: "2 1 200px", minWidth: 160 }}
+                          placeholder="Name"
+                          value={item.name}
+                          onChange={(e) => updateField("name", e.target.value)}
+                        />
+                        <input
+                          style={{ ...fieldStyle, flex: "0 1 120px", minWidth: 90, maxWidth: 140 }}
+                          placeholder="Price"
+                          value={item.price}
+                          onChange={(e) => updateField("price", e.target.value)}
+                        />
+                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#475569", whiteSpace: "nowrap" }}>
+                          <input
+                            type="checkbox"
+                            checked={item.available}
+                            onChange={(e) => updateField("available", e.target.checked)}
+                          />
+                          Available
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => toggleMenuExpand(item._clientKey)}
+                          aria-expanded={expanded}
+                          aria-label={expanded ? "Collapse item details" : "Expand item details"}
+                          style={{
+                            ...ghostBtnStyle,
+                            marginLeft: "auto",
+                            width: 32,
+                            height: 32,
+                            justifyContent: "center",
+                            padding: 0,
+                            color: "#475569",
+                            background: expanded ? "#f1f5f9" : "transparent",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: 8,
+                            fontSize: 14,
+                          }}
+                        >
+                          {expanded ? "▾" : "▸"}
+                        </button>
+                      </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
-              <button onClick={saveMenu} disabled={menuSaving} style={{ ...saveBtnStyle, background: menuSaving ? "#e5e7eb" : "white" }}>
-                {menuSaving ? "Saving..." : `Save ${menuTabLabel.toLowerCase()}`}
-              </button>
-              {menuStatus && <span style={{ fontWeight: 600 }}>{menuStatus}</span>}
-            </div>
+                      {expanded && (
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 10,
+                            padding: "0 12px 12px",
+                            borderTop: "1px solid #eef1f7",
+                          }}
+                        >
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginTop: 12 }}>
+                            <input
+                              style={fieldStyle}
+                              placeholder="Category"
+                              value={item.category}
+                              onChange={(e) => updateField("category", e.target.value)}
+                            />
+                            <input
+                              style={fieldStyle}
+                              placeholder="Tags (comma separated)"
+                              value={item.tags}
+                              onChange={(e) => updateField("tags", e.target.value)}
+                            />
+                          </div>
+                          <textarea
+                            style={areaStyle}
+                            placeholder="Description"
+                            rows={3}
+                            value={item.description}
+                            onChange={(e) => updateField("description", e.target.value)}
+                          />
+                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <button
+                              onClick={() => {
+                                const target = menuItems[idx];
+                                if (target?.id) setDeletedMenuIds((prev) => [...prev, target.id as string]);
+                                setExpandedMenuKeys((prev) => {
+                                  const next = new Set(prev);
+                                  next.delete(item._clientKey);
+                                  return next;
+                                });
+                                setMenuItems(menuItems.filter((_, rowIdx) => rowIdx !== idx));
+                              }}
+                              style={dangerBtnStyle}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {hasMenuItems && (
+              <div style={sectionFooterStyle}>
+                <button
+                  onClick={saveMenu}
+                  disabled={menuSaving}
+                  style={{ ...primaryBtnStyle, opacity: menuSaving ? 0.7 : 1 }}
+                >
+                  {menuSaving ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            )}
           </section>
         )}
 
         {/* ─── Booking Rules Tab ─── */}
         {activeTab === "booking" && (
-          <section
-            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-          >
-            <h2 style={{ marginTop: 0 }}>Booking Rules</h2>
-            <div style={{ display: "grid", gap: 8 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <section style={sectionStyle}>
+            <div style={sectionHeaderStyle}>
+              <h2 style={sectionTitleStyle}>Booking Rules</h2>
+            </div>
+            <div style={{ display: "grid", gap: 10 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#0f172a" }}>
                 <input type="checkbox" checked={bookingEnabled} onChange={(e) => setBookingEnabled(e.target.checked)} />
                 Booking enabled
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#0f172a" }}>
                 <input type="checkbox" checked={requireName} onChange={(e) => setRequireName(e.target.checked)} />
                 Require customer name
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#0f172a" }}>
                 <input type="checkbox" checked={requirePhone} onChange={(e) => setRequirePhone(e.target.checked)} />
                 Require customer phone
               </label>
               {businessType === "restaurant" && (
                 <label style={{ display: "grid", gap: 6, maxWidth: 260 }}>
-                  <span>Max party size (optional)</span>
-                  <input type="number" style={fieldStyle} value={maxPartySize} onChange={(e) => setMaxPartySize(e.target.value)} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#334155" }}>Max party size (optional)</span>
+                  <input
+                    type="number"
+                    style={fieldStyle}
+                    value={maxPartySize}
+                    onChange={(e) => setMaxPartySize(e.target.value)}
+                  />
                 </label>
               )}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
-              <button onClick={saveBookingRules} disabled={bookingSaving} style={{ ...saveBtnStyle, background: bookingSaving ? "#e5e7eb" : "white" }}>
-                {bookingSaving ? "Saving..." : "Save booking rules"}
+            <div style={sectionFooterStyle}>
+              <button
+                onClick={saveBookingRules}
+                disabled={bookingSaving}
+                style={{ ...primaryBtnStyle, opacity: bookingSaving ? 0.7 : 1 }}
+              >
+                {bookingSaving ? "Saving..." : "Save changes"}
               </button>
-              {bookingStatus && <span style={{ fontWeight: 600 }}>{bookingStatus}</span>}
             </div>
           </section>
         )}
 
         {/* ─── Knowledge Base Tab ─── */}
         {activeTab === "knowledge" && (
-          <section
-            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-          >
-            <h2 style={{ marginTop: 0 }}>Knowledge Base</h2>
-            <p style={{ marginTop: 0, color: "#6b7280", fontSize: 13 }}>
+          <section style={sectionStyle}>
+            <div style={sectionHeaderStyle}>
+              <h2 style={sectionTitleStyle}>Knowledge Base</h2>
+            </div>
+            <p style={{ marginTop: 0, marginBottom: 14, color: "#64748b", fontSize: 13 }}>
               Manual Q&amp;A entries plus answers learned from human replies.
             </p>
             <KnowledgeBaseSection />
@@ -1027,59 +1225,85 @@ export default function BusinessSetupPage() {
 
         {/* ─── FAQs Tab ─── */}
         {activeTab === "faqs" && (
-          <section
-            style={{ border: "1px solid rgba(0,0,0,0.12)", borderRadius: 12, padding: 14, background: "white" }}
-          >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <h2 style={{ marginTop: 0 }}>FAQs</h2>
-              <button onClick={() => setFaqs((prev) => [{ question: "", answer: "" }, ...prev])}>
-                Add FAQ
-              </button>
+          <section style={sectionStyle}>
+            <div style={sectionHeaderStyle}>
+              <h2 style={sectionTitleStyle}>FAQs</h2>
+              {faqs.length > 0 && (
+                <button onClick={addFaq} style={secondaryBtnStyle}>
+                  <span aria-hidden="true">+</span>
+                  Add FAQ
+                </button>
+              )}
             </div>
 
-            <div style={{ display: "grid", gap: 8 }}>
-              {faqs.map((row, idx) => (
-                <div
-                  key={row.id || `new-faq-${idx}`}
-                  style={{ border: "1px solid rgba(0,0,0,0.1)", borderRadius: 10, padding: 10 }}
-                >
-                  <input
-                    style={fieldStyle}
-                    placeholder="Question"
-                    value={row.question}
-                    onChange={(e) => { const next = [...faqs]; next[idx] = { ...next[idx], question: e.target.value }; setFaqs(next); }}
-                  />
-                  <textarea
-                    style={{ ...areaStyle, width: "100%", marginTop: 8 }}
-                    placeholder="Answer"
-                    rows={3}
-                    value={row.answer}
-                    onChange={(e) => { const next = [...faqs]; next[idx] = { ...next[idx], answer: e.target.value }; setFaqs(next); }}
-                  />
-                  <button
-                    onClick={() => {
-                      const target = faqs[idx];
-                      if (target?.id) setDeletedFaqIds((prev) => [...prev, target.id as string]);
-                      setFaqs(faqs.filter((_, rowIdx) => rowIdx !== idx));
-                    }}
+            {faqs.length === 0 ? (
+              <EmptyState
+                icon="?"
+                title="No FAQs yet"
+                description="Capture common customer questions and the answers you'd give. The assistant uses these for quick, accurate replies."
+                actionLabel="Add your first FAQ"
+                onAction={addFaq}
+              />
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {faqs.map((row, idx) => (
+                  <div
+                    key={row._clientKey}
+                    style={{ border: "1px solid #e2e8f0", borderRadius: 12, padding: 12, background: "white" }}
                   >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              {faqs.length === 0 && <p style={{ color: "#6b7280" }}>No FAQs yet.</p>}
-            </div>
+                    <input
+                      style={fieldStyle}
+                      placeholder="Question"
+                      value={row.question}
+                      onChange={(e) => { const next = [...faqs]; next[idx] = { ...next[idx], question: e.target.value }; setFaqs(next); }}
+                    />
+                    <textarea
+                      style={{ ...areaStyle, marginTop: 8 }}
+                      placeholder="Answer"
+                      rows={3}
+                      value={row.answer}
+                      onChange={(e) => { const next = [...faqs]; next[idx] = { ...next[idx], answer: e.target.value }; setFaqs(next); }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                      <button
+                        onClick={() => {
+                          const target = faqs[idx];
+                          if (target?.id) setDeletedFaqIds((prev) => [...prev, target.id as string]);
+                          setFaqs(faqs.filter((_, rowIdx) => rowIdx !== idx));
+                        }}
+                        style={dangerBtnStyle}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
-              <button onClick={saveFaqs} disabled={faqsSaving} style={{ ...saveBtnStyle, background: faqsSaving ? "#e5e7eb" : "white" }}>
-                {faqsSaving ? "Saving..." : "Save FAQs"}
-              </button>
-              {faqsStatus && <span style={{ fontWeight: 600 }}>{faqsStatus}</span>}
-            </div>
+            {faqs.length > 0 && (
+              <div style={sectionFooterStyle}>
+                <button
+                  onClick={saveFaqs}
+                  disabled={faqsSaving}
+                  style={{ ...primaryBtnStyle, opacity: faqsSaving ? 0.7 : 1 }}
+                >
+                  {faqsSaving ? "Saving..." : "Save changes"}
+                </button>
+              </div>
+            )}
           </section>
         )}
       </div>
       </div>
     </DashboardShell>
+  );
+}
+
+export default function BusinessSetupPage() {
+  return (
+    <ToastProvider>
+      <BusinessSetupInner />
+    </ToastProvider>
   );
 }

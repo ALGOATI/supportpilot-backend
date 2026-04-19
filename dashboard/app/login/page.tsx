@@ -75,11 +75,8 @@ export default function LoginPage() {
         />
 
         <div style={styles.logoRow}>
-          <div style={styles.logoMark}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-            </svg>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/supportpilot-logo.svg" alt="SupportPilot" width={40} height={40} style={styles.logoMark} />
           <span style={styles.logoText}>SupportPilot</span>
         </div>
 
@@ -217,10 +214,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 40,
     height: 40,
     borderRadius: 12,
-    background: "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    display: "block",
     flexShrink: 0,
   },
   logoText: { fontSize: 20, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" },
